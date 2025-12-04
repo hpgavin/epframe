@@ -1,8 +1,6 @@
-<<<<<<< HEAD
 # epframe
 Elastic-Plastic analysis of 2D structural frames
 =======
-# EPFRAME - Elastic-Plastic Frame Analysis
 
 ## Overview
 
