@@ -299,10 +299,11 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ## License
 
-This implementation is based on public domain FORTRAN code. The Python translation and enhancements are provided for educational and research purposes.
+This implementation is based on public domain FORTRAN code
+and is now licensed from the MIT License.  
 
 ## Author
 
 Original FORTRAN: Hacksoo Lee (1986)  
 Python Translation: Duke University Civil & Environmental Engineering
->>>>>>> 3f5f4a0 (first commit)
+
