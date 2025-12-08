@@ -119,37 +119,40 @@ Maintain consistent units throughout. Example using US customary:
 # EPFRAME Example: 7-Element Portal Frame
 # Units: inches, kips, ksi
 
-5                              # Frame number
+5                                   # Frame number
 
-8   7   29000                  # 8 nodes, 7 elements, E=29000 ksi
+8   7   29000                       # 8 nodes, 7 elements, E=29000 ksi
 
 # Node data: fixed supports at nodes 1 and 8
-1     0     0   0   0   0      # Fixed support (left)
-2     0   168   1   1   1      # Column top (left)
-3   120   252   1   1   1      # Roof nodes
-4   216   252   1   1   1
-5   312   252   1   1   1
-6   408   252   1   1   1
-7   528   168   1   1   1      # Column top (right)
-8   528     0   0   0   0      # Fixed support (right)
+# Node  X     Y  DFX  DFY  DFZ      # Coordinates and DOF flags
+1       0     0   0    0    0       # Fixed support (left)
+2       0   168   1    1    1       # Column top (left)
+3     120   252   1    1    1       # Roof nodes
+4     216   252   1    1    1
+5     312   252   1    1    1
+6     408   252   1    1    1
+7     528   168   1    1    1       # Column top (right)
+8     528     0   0    0    0       # Fixed support (right)
 
 # Element data: W14x68 sections
-1   1   2   954   19.7   4680  # Left column
-2   2   3   954   19.7   4680  # Roof elements
-3   3   4   954   19.7   4680
-4   4   5   954   19.7   4680
-5   5   6   954   19.7   4680
-6   6   7   954   19.7   4680
-7   7   8   954   19.7   4680  # Right column
+# Elem  N1  N2     I     A      Mp  # Connectivity, properties, plastic moment
+1        1   2   954   19.7   4680  # Left column
+2        2   3   954   19.7   4680  # Roof elements
+3        3   4   954   19.7   4680
+4        4   5   954   19.7   4680
+5        5   6   954   19.7   4680
+6        6   7   954   19.7   4680
+7        7   8   954   19.7   4680  # Right column
 
-5                              # 5 loaded nodes
+5                                   # 5 loaded nodes
 
 # Loads: lateral + gravity
-2   0.50   0.00   0            # Lateral at node 2
-3   0.25  -1.00   0            # Combined at node 3
-4   0.00  -1.00   0            # Gravity loads
-5   0.00  -1.00   0
-6   0.00  -1.00   0
+# Node   FX     FY    MZ            # Applied forces and moment
+2       0.50   0.00   0.0           # Lateral at node 2
+3       0.25  -1.00   0.0           # Combined at node 3
+4       0.00  -1.00   0.0           # Gravity loads
+5       0.00  -1.00   0.0
+6       0.00  -1.00   0.0
 ```
 
 ## Output Format
