@@ -224,7 +224,7 @@ Columns:
 2. **Load Increment Loop**
    
    - Form global stiffness matrix: K = C^T · S · C
-   - Solve for displacements: K · δ P
+   - Solve for displacements: K · δ = P
    - Calculate member forces: F = S · C · δ
    - Find load factor λ to first plastic hinge: λ = (Mp - M) / ΔM
    - Update cumulative values (displacements, moments, forces)
