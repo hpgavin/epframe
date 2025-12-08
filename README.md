@@ -1,4 +1,5 @@
 # epframe
+
 Elastic-Plastic analysis of 2D structural frames
 =======
 
@@ -217,14 +218,14 @@ Columns:
 
 1. **Initialization**
    
-   - Build compatibility matrix K from geometry
+   - Build compatibility matrix C from geometry
    - Calculate initial member stiffnesses
 
 2. **Load Increment Loop**
    
-   - Form global stiffness matrix: K_global = K^T · S · K
-   - Solve for displacements: K_global · δ = P
-   - Calculate member forces: F = S · K · δ
+   - Form global stiffness matrix: K = C^T · S · C
+   - Solve for displacements: K · δ P
+   - Calculate member forces: F = S · C · δ
    - Find load factor λ to first plastic hinge: λ = (Mp - M) / ΔM
    - Update cumulative values (displacements, moments, forces)
    - Modify stiffness at plastic hinge location
@@ -232,7 +233,7 @@ Columns:
 
 3. **Plastic Hinge Modification**
    
-   - Near-end (hinge location): Stiffness → 0, moment locked at Mp
+   - Near-end (hinge location): Stiffness → 0, moment fixed at the value Mp
    - Far-end: Stiffness reduced to 75% (cantilever effect)
 
 4. **Termination Conditions**
@@ -289,8 +290,7 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 **Unexpected results:**
 
 - Verify consistent units throughout input
-- Check element connectivity (N1, N2 assignments)
-- 
+- Check element connectivity (N1, N2 assignments)from
 - Confirm DOF flags (0=fixed, 1=free)
 - Review applied load directions and magnitudes
 
@@ -302,11 +302,9 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ## License
 
-This implementation is based on public domain FORTRAN code
-and is now licensed from the MIT License.  
+This implementation is based on public domain FORTRAN code and is now licensed under the MIT License.  
 
 ## Author
 
 Original FORTRAN: Hacksoo Lee (1986)  
 Python Translation: Duke University Civil & Environmental Engineering
-
