@@ -259,11 +259,11 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ### Progressive Collapse
 
-![Progressive Collapse Summary](frame_5_summary.png)
+![Progressive Collapse Summary](plots/frame_0_summary.png)
 
 ### Bending Moment Diagram
 
-![Moment Diagram](frame_5_moments_hinge_4.png)
+![Moment Diagram](plots/frame_0_moments_hinge_4.png)
 
 ## Limitations
 
