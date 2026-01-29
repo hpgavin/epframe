@@ -15,31 +15,31 @@ from math import sqrt
 
 def get_csv_header(NCT, NE):
     """Generate CSV header row"""
-    headers = ['NCYCL', 'EL', 'ND', 'CLG']
-    # CX values - 3 per node (X, Y, Rotation)
+    headers = ['NCYCL', 'EL', 'NH', 'CLF']
+    # CD - cumulative displacement - 3 per node (X, Y, Rotation)
     for nd in range(NCT):
-        headers.append(f'CX{nd+1}_X')
-        headers.append(f'CX{nd+1}_Y')
-        headers.append(f'CX{nd+1}_R')
-    # CM values - 2 per element (moment at each end)
+        headers.append(f'CD{nd+1}_X')
+        headers.append(f'CD{nd+1}_Y')
+        headers.append(f'CD{nd+1}_R')
+    # CM - cumulative moment - 2 per element (moment at each end)
     for el in range(NE):
         headers.append(f'CM{el+1}_1')
         headers.append(f'CM{el+1}_2')
-    # CT values - 1 per element (axial force)
+    # CT - cumulative tension - 1 per element (axial force)
     for el in range(NE):
         headers.append(f'CT{el+1}')
     return ','.join(headers)
 
-def write_csv_row(csv_fp, NCYCL, EL, ND, CLG, CX, CM, CT, NTYPE, NCT, NE):
+def write_csv_row(csv_fp, NCYCL, EL, NH, CLF, CD, CM, CT, DOF, NCT, NE):
     """Write a data row to CSV file"""
-    values = [f'{NCYCL}', f'{EL}', f'{ND}', f'{CLG:.6E}']
-    # CX values - write for all 3*NCT slots
-    LL = 0
+    values = [f'{NCYCL}', f'{EL}', f'{NH}', f'{CLF:.6E}']
+    # CD - cumulative displacement - write for all 3*NCT slots
+    NN = 0
     for nd in range(NCT):
         for dof in range(3):
-            if NTYPE[nd, dof]:
-                values.append(f'{CX[LL]:.6E}')
-                LL += 1
+            if DOF[nd, dof]:
+                values.append(f'{CD[NN]:.6E}')
+                NN += 1
             else:
                 values.append(f'{0.0:.6E}')
     # CM values
@@ -74,7 +74,7 @@ def read_input_file(filename):
     
     # Node data (0-indexed)
     CORD = np.zeros((NCT, 2))
-    NTYPE = np.zeros((NCT, 3), dtype=int)
+    DOF = np.zeros((NCT, 3), dtype=int) # indicates degree-of-freedom coordinates
     
     for i in range(NCT):
         parts = lines[idx].split()
@@ -82,10 +82,12 @@ def read_input_file(filename):
         node_num = int(parts[0]) - 1  # Convert to 0-indexed
         CORD[node_num, 0] = float(parts[1])
         CORD[node_num, 1] = float(parts[2])
-        NTYPE[node_num, 0] = int(parts[3])
-        NTYPE[node_num, 1] = int(parts[4])
-        NTYPE[node_num, 2] = int(parts[5])
+        DOF[node_num, 0] = int(parts[3])
+        DOF[node_num, 1] = int(parts[4])
+        DOF[node_num, 2] = int(parts[5])
         idx += 1
+
+    DOF = 1 - DOF  # change RCT 1 to DOF 0 and RCT 0 to DOF 1
     
     # Element data (0-indexed, connectivity stores 0-based node indices)
     ECON = np.zeros((NE, 2), dtype=int)  # Element connectivity
@@ -110,20 +112,20 @@ def read_input_file(filename):
     loads = []
     for i in range(LN):
         parts = lines[idx].split()
-        ND = int(parts[0]) - 1  # Convert to 0-indexed
+        NH = int(parts[0]) - 1  # Convert to 0-indexed
         FX = float(parts[1])
         FY = float(parts[2])
         FZ = float(parts[3])
-        loads.append((ND, FX, FY, FZ))
+        loads.append((NH, FX, FY, FZ))
         idx += 1
     
-    return FN, NCT, NE, E, CORD, NTYPE, ECON, SMA, AREA, PM, loads
+    return FN, NCT, NE, E, CORD, DOF, ECON, SMA, AREA, PM, loads
 
 def epframe_analysis(input_file, output_file):
     """Main elastic-plastic frame analysis"""
     
     # Read input
-    FN, NCT, NE, E, CORD, NTYPE, ECON, SMA, AREA, PM, loads = read_input_file(input_file)
+    FN, NCT, NE, E, CORD, DOF, ECON, SMA, AREA, PM, loads = read_input_file(input_file)
     
     # Open output file and CSV file
     fp = open(output_file, 'w')
@@ -137,27 +139,27 @@ def epframe_analysis(input_file, output_file):
     fp.write(f"%     ELASTIC PLASTIC ANALYSIS OF FRAME NO {FN}\n")
     fp.write(f"%     ---------------------------------------\n%\n")
     
-    # Calculate number of DOFs
-    L = int(np.sum(NTYPE))
+    # Calculate number of DOFs (coordinates without reactions) 
+    ND = int(np.sum(DOF))
     
     # Initialize load vector
-    VL = np.zeros(L)
+    LV = np.zeros(ND)
     
     # Process loads
     for load in loads:
-        ND, FX, FY, FZ = load
+        NH, FX, FY, FZ = load
         OLEN = [FX, FY, FZ]
         
         # Count DOFs before this node
-        LL = 0
-        for nd in range(ND):
-            LL += np.sum(NTYPE[nd])
+        NN = 0
+        for nd in range(NH):
+            NN += np.sum(DOF[nd])
         
         # Assign loads to corresponding DOFs
         for k in range(3):
-            if NTYPE[ND, k]:
-                VL[LL] = OLEN[k]
-                LL += 1
+            if DOF[NH, k]:
+                LV[NN] = OLEN[k]
+                NN += 1
     
     fp.write(f"%     * GENERAL DATA\n")
     fp.write(f"%          NUMBER OF NODES         {NCT:6d}\n")
@@ -166,9 +168,9 @@ def epframe_analysis(input_file, output_file):
     
     # Input Echo: Node Data
     fp.write("%\n%     * DATA FOR NODES\n")
-    fp.write("%           NODE   X-COORD   Y-COORD   DFX   DFY   DFZ\n%\n")
+    fp.write("%           NODE   X-COORD   Y-COORD    RX    RY    RZ\n%\n")
     for i in range(NCT):
-        fp.write(f"%{i+1:14d}{CORD[i,0]:12.2f}{CORD[i,1]:10.2f}{NTYPE[i,0]:6d}{NTYPE[i,1]:6d}{NTYPE[i,2]:6d}\n")
+        fp.write(f"%{i+1:14d}{CORD[i,0]:12.2f}{CORD[i,1]:10.2f}{1-DOF[i,0]:6d}{1-DOF[i,1]:6d}{1-DOF[i,2]:6d}\n")
     
     # Input Echo: Element Data
     fp.write("%\n%     * DATA FOR ELEMENTS\n")
@@ -180,8 +182,8 @@ def epframe_analysis(input_file, output_file):
     fp.write("%\n%     * DATA FOR LOADS\n")
     fp.write("%           NODE        PX        PY        PZ\n")
     for load in loads:
-        ND, FX, FY, FZ = load
-        fp.write(f"%{ND+1:14d}{FX:12.2f}{FY:10.2f}{FZ:10.2f}\n")
+        NH, FX, FY, FZ = load
+        fp.write(f"%{NH+1:14d}{FX:12.2f}{FY:10.2f}{FZ:10.2f}\n")
     
     # Calculate element lengths
     OLEN_elems = np.zeros(NE)
@@ -209,17 +211,17 @@ def epframe_analysis(input_file, output_file):
     # Initialize cumulative variables
     CM = np.zeros(E2)   # Cumulative moments
     CT = np.zeros(NE)   # Cumulative tensions
-    CX = np.zeros(L)    # Cumulative displacements
+    CD = np.zeros(ND)    # Cumulative displacements
     
     NCYCL = 0
-    CLG = 0.0
+    CLF = 0.0
     
     # Write initial state record (cycle 0) to CSV
-    write_csv_row(csv_fp, 0, 0, 0, 0.0, CX, CM, CT, NTYPE, NCT, NE)
+    write_csv_row(csv_fp, 0, 0, 0, 0.0, CD, CM, CT, DOF, NCT, NE)
     
     # Build compatibility matrix K
     # Each row corresponds to a DOF, each column to an element force
-    K = np.zeros((L, E3))
+    K = np.zeros((ND, E3))
     
     row_start = 0  # Starting row for current node
     
@@ -228,7 +230,7 @@ def epframe_analysis(input_file, output_file):
             # Check if node nd is connected to element el
             if nd == ECON[el, 0]:
                 NF = ECON[el, 1]  # Far node
-                EI_near = 2*el      # Element moment index at near end (0-indexed)
+                EI_near = 2*el    # Element moment index at near end (0-indexed)
                 EI_far = 2*el + 1
             elif nd == ECON[el, 1]:
                 NF = ECON[el, 0]
@@ -239,30 +241,30 @@ def epframe_analysis(input_file, output_file):
             
             X = CORD[NF, 0] - CORD[nd, 0]
             Y = CORD[NF, 1] - CORD[nd, 1]
-            D = sqrt(X*X + Y*Y)
-            S = Y / D
-            C = X / D
+            L = sqrt(X*X + Y*Y)
+            S = Y / L #   sine
+            C = X / L # cosine
             axial_col = 2*NE + el  # Column for axial force
             
             # Fill rows for this node's free DOFs
             NA = row_start
-            if NTYPE[nd, 0]:
-                K[NA, EI_near] = S / D
+            if DOF[nd, 0]:
+                K[NA, EI_near] = S / L
                 K[NA, EI_far] = K[NA, EI_near]
                 K[NA, axial_col] = -C
                 NA += 1
             
-            if NTYPE[nd, 1]:
-                K[NA, EI_near] = -C / D
+            if DOF[nd, 1]:
+                K[NA, EI_near] = -C / L
                 K[NA, EI_far] = K[NA, EI_near]
                 K[NA, axial_col] = -S
                 NA += 1
             
-            if NTYPE[nd, 2]:
+            if DOF[nd, 2]:
                 K[NA, EI_near] = 1.0
         
         # Advance row_start by number of DOFs at this node
-        row_start += int(np.sum(NTYPE[nd]))
+        row_start += int(np.sum(DOF[nd]))
     
     # Main analysis loop
     while True:
@@ -288,17 +290,17 @@ def epframe_analysis(input_file, output_file):
         
         # Solve system using numpy linear algebra
         try:
-            disp = np.linalg.solve(KSAT, VL)
+            disp = np.linalg.solve(KSAT, LV)
         except np.linalg.LinAlgError:
             fp.write("%     * DIVISION BY ZERO IN SOLUTION OF EQUATION\n%\n")
             break
         
         # Check for excessive deformations
-        XLMT = 1000.0
+        DLMT = 1000.0
         max_disp = np.max(np.abs(disp))
         
-        if max_disp > XLMT:
-            fp.write(f"%\n%     *** DEFORMATIONS LARGER THAN {XLMT:.1f} IN CYCLE NO {NCYCL:4d}\n%\n")
+        if max_disp > DLMT:
+            fp.write(f"%\n%     *** DEFORMATIONS LARGER THAN {DLMT:.1f} IN CYCLE NO {NCYCL:4d}\n%\n")
             break
         
         # Calculate element deformations and forces
@@ -316,47 +318,47 @@ def epframe_analysis(input_file, output_file):
         ZERO = 0.001 * PM_expanded
         small_satx = np.abs(SATX_e2) < ZERO
         safe_denom = np.where(small_satx, 1.0, np.abs(SATX_e2))
-        ALG = np.where(small_satx, 1.0E10, (PM_expanded - np.abs(CM)) / safe_denom)
+        ALF = np.where(small_satx, 1.0E10, (PM_expanded - np.abs(CM)) / safe_denom)
         
         # Find minimum load factor where moment is increasing (same sign)
         TEST = CM * SATX_e2
         valid_mask = TEST >= 0.0
-        ALG_masked = np.where(valid_mask, ALG, 1.0E10)
-        NPH = int(np.argmin(ALG_masked))  # 0-indexed
-        SALG = ALG_masked[NPH]
+        ALF_masked = np.where(valid_mask, ALF, 1.0E10)
+        PHN = int(np.argmin(ALF_masked))  # 0-indexed plastic hinge node
+        SALF = ALF_masked[PHN]
         
-        # Scale forces and update cumulative values
-        SATX *= SALG
-        CLG += SALG
-        CM += SATX[:E2]
-        CT += SATX[E2:]
-        disp *= SALG
-        CX += disp
+        # Scale forces and update cumulative values of ...  
+        SATX *= SALF
+        disp *= SALF     
+        CD += disp      # cumulative displacemtn
+        CLF += SALF     # cumulative load factor
+        CM += SATX[:E2] # cumulative moments 
+        CT += SATX[E2:] # cumulative tension
         
         # Determine which element and node
-        EL = NPH // 2  # 0-indexed element
-        if NPH % 2 == 0:
-            ND = ECON[EL, 0]
+        EL = PHN // 2  # 0-indexed element
+        if PHN % 2 == 0:
+            NH = ECON[EL, 0]
         else:
-            ND = ECON[EL, 1]
+            NH = ECON[EL, 1]
         
         EL_hinge = EL
-        ND_hinge = ND
+        NH_hinge = NH
         
         # Print results (convert to 1-indexed for display)
         fp.write("%\n%\n%\n")
-        fp.write(f"%     * PLASTIC HINGE {NCYCL:3d} FORMED IN ELEMENT {EL+1:3d} NEAR NODE {ND+1:3d} WHEN LOAD FACTOR IS {CLG:12.3f}\n%\n")
+        fp.write(f"%     * PLASTIC HINGE {NCYCL:3d} FORMED IN ELEMENT {EL+1:3d} NEAR NODE {NH+1:3d} WHEN LOAD FACTOR IS {CLF:12.3f}\n%\n")
         
         fp.write("%          CUMULATIVE DEFORMATIONS\n")
         fp.write("%                NODE    X-DISP       Y-DISP       ROTN\n")
         
-        LL = 0
+        NN = 0
         for nd in range(NCT):
             disp_out = [0.0, 0.0, 0.0]
             for dof in range(3):
-                if NTYPE[nd, dof]:
-                    disp_out[dof] = CX[LL]
-                    LL += 1
+                if DOF[nd, dof]:
+                    disp_out[dof] = CD[NN]
+                    NN += 1
             fp.write(f"%{nd+1:19d}{disp_out[0]:13.5f}{disp_out[1]:13.5f}{disp_out[2]:13.5f}\n")
         
         fp.write("%\n%          CUMULATIVE MOMENTS\n")
@@ -374,11 +376,11 @@ def epframe_analysis(input_file, output_file):
         
         # Calculate and output reactions at support nodes
         fp.write("%\n%          REACTIONS AT SUPPORTS\n")
-        fp.write("%                NODE       RX           RY           MZ\n")
+        fp.write("%                NODE       FX           FY           MZ\n")
         
         for nd in range(NCT):
             # Check if this node has any restrained DOFs
-            is_support = (NTYPE[nd, 0] == 0 or NTYPE[nd, 1] == 0 or NTYPE[nd, 2] == 0)
+            is_support = (DOF[nd, 0] == 0 or DOF[nd, 1] == 0 or DOF[nd, 2] == 0)
             if not is_support:
                 continue
             
@@ -416,26 +418,27 @@ def epframe_analysis(input_file, output_file):
             fp.write(f"%{nd+1:19d}{-Rx:13.2f}{-Ry:13.2f}{-Rz:13.2f}\n")
         
         # Write data row to CSV
-        write_csv_row(csv_fp, NCYCL, EL_hinge+1, ND_hinge+1, CLG, CX, CM, CT, NTYPE, NCT, NE)
+        write_csv_row(csv_fp, NCYCL, EL_hinge+1, NH_hinge+1, CLF, CD, CM, CT, DOF, NCT, NE)
         
         # Modify stiffness for plastic hinge
-        if NPH % 2 == 0:
+        if PHN % 2 == 0:
             # Hinge at first end of element
-            SF[NPH+1, 1] = 0.75 * SF[NPH+1, 1]
-            SF[NPH+1, 0] = 0.0
-            SF[NPH, 0] = 0.0
-            SF[NPH, 1] = 0.0
+            SF[PHN+1, 1] = 0.75 * SF[PHN+1, 1]
+            SF[PHN+1, 0] = 0.0
+            SF[PHN, 0] = 0.0
+            SF[PHN, 1] = 0.0
         else:
             # Hinge at second end of element
-            SF[NPH-1, 0] = 0.75 * SF[NPH-1, 0]
-            SF[NPH-1, 1] = 0.0
-            SF[NPH, 0] = 0.0
-            SF[NPH, 1] = 0.0
+            SF[PHN-1, 0] = 0.75 * SF[PHN-1, 0]
+            SF[PHN-1, 1] = 0.0
+            SF[PHN, 0] = 0.0
+            SF[PHN, 1] = 0.0
+        print(f"    LOAD FACTOR {NCYCL:2d} = {CLF:.3f} ")
     
-    fp.write(f"%\n%     ANALYSIS COMPLETED FOR FRAME NO {FN:3d}\n\n")
+    fp.write(f"%\n%     ANALYSIS COMPLETED FOR FRAME NO {FN:3d} AT LOAD FACTOR {CLF:.3f} \n\n")
     fp.close()
     csv_fp.close()
-    print(f"Analysis completed. Results written to {output_file}")
+    print(f"Analysis completed at load factor {CLF:.3f}. Results written to {output_file}")
     print(f"Compact data written to {csv_file}")
 
 if __name__ == "__main__":

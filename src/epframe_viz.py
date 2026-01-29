@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon, FancyBboxPatch
 import sys
 import re
+import os
 
 def read_output_file(filename):
     """
@@ -30,7 +31,6 @@ def read_output_file(filename):
     E_mod = 0.0 # Modulus of elasticity
     
     CORD = None   # Node coordinates
-    NTYPE = None  # Node DOF flags
     ECON = None   # Element connectivity
     PM = None     # Plastic moments
     
@@ -60,7 +60,7 @@ def read_output_file(filename):
             # Skip header lines
             i += 2
             CORD = np.zeros((NCT, 2))
-            NTYPE = np.zeros((NCT, 3), dtype=int)
+            DOF = np.zeros((NCT, 3), dtype=int) # indicates degree-of-freedom coordinates
             
             for nd in range(NCT):
                 i += 1
@@ -69,9 +69,11 @@ def read_output_file(filename):
                 node_num = int(parts[0]) - 1  # Convert to 0-indexed
                 CORD[node_num, 0] = float(parts[1])
                 CORD[node_num, 1] = float(parts[2])
-                NTYPE[node_num, 0] = int(parts[3])
-                NTYPE[node_num, 1] = int(parts[4])
-                NTYPE[node_num, 2] = int(parts[5])
+                DOF[node_num, 0] = int(parts[3])
+                DOF[node_num, 1] = int(parts[4])
+                DOF[node_num, 2] = int(parts[5])
+
+            DOF = 1 - DOF  # change RCT 1 to DOF 0 and RCT 0 to DOF 1
         
         # Element data section
         if 'DATA FOR ELEMENTS' in line:
@@ -191,7 +193,7 @@ def read_output_file(filename):
         
         i += 1
     
-    return (FN, NCT, NE, E_mod, CORD, NTYPE, ECON, PM,
+    return (FN, NCT, NE, E_mod, CORD, DOF, ECON, PM,
             hinges, disp_history, moment_history, force_history, load_factors)
 
 def draw_support(ax, x, y, ntype, size):
@@ -223,7 +225,7 @@ def draw_support(ax, x, y, ntype, size):
         ax.add_patch(circle)
         ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
 
-def plot_frame_geometry(CORD, NTYPE, ECON, NCT, NE, title="Frame Geometry"):
+def plot_frame_geometry(CORD, DOF, ECON, NCT, NE, title="Frame Geometry"):
     """Plot undeformed frame geometry with supports"""
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -253,8 +255,8 @@ def plot_frame_geometry(CORD, NTYPE, ECON, NCT, NE, title="Frame Geometry"):
         x, y = CORD[nd, 0], CORD[nd, 1]
         
         # Draw support if any DOF is restrained
-        if NTYPE[nd, 0] == 0 or NTYPE[nd, 1] == 0:
-            draw_support(ax, x, y, NTYPE[nd], margin * 0.15)
+        if DOF[nd, 0] == 0 or DOF[nd, 1] == 0:
+            draw_support(ax, x, y, DOF[nd], margin * 0.15)
         
         # Draw node
         ax.plot(x, y, 'ko', markersize=8, zorder=3)
@@ -271,7 +273,7 @@ def plot_frame_geometry(CORD, NTYPE, ECON, NCT, NE, title="Frame Geometry"):
     
     return fig, ax
 
-def plot_deformed_shape(CORD, NTYPE, ECON, NCT, NE, disp, load_factor, 
+def plot_deformed_shape(CORD, DOF, ECON, NCT, NE, disp, load_factor, 
                         scale=None, hinge_info=None):
     """Plot deformed shape with optional hinge markers"""
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -317,8 +319,8 @@ def plot_deformed_shape(CORD, NTYPE, ECON, NCT, NE, disp, load_factor,
     
     # Draw supports at original positions
     for nd in range(NCT):
-        if NTYPE[nd, 0] == 0 or NTYPE[nd, 1] == 0:
-            draw_support(ax, CORD[nd, 0], CORD[nd, 1], NTYPE[nd], margin * 0.12)
+        if DOF[nd, 0] == 0 or DOF[nd, 1] == 0:
+            draw_support(ax, CORD[nd, 0], CORD[nd, 1], DOF[nd], margin * 0.12)
     
     # Draw plastic hinges
     if hinge_info:
@@ -655,9 +657,19 @@ def plot_shear_diagram(CORD, ECON, NCT, NE, moments, load_factor):
 
 def visualize_frame(output_file):
     """Create all visualizations for frame analysis from output file only"""
+
+
+    path = './plots/'
+
+    # check whether './plots/' already exists
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("sub-directory %s created!" % path)
+    else:
+        print("sub-directory %s already exists" % path)
     
     # Read all data from output file
-    (FN, NCT, NE, E_mod, CORD, NTYPE, ECON, PM,
+    (FN, NCT, NE, E_mod, CORD, DOF, ECON, PM,
      hinges, disp_history, moment_history, force_history, load_factors) = read_output_file(output_file)
     
     print(f"Frame {FN}: {NCT} nodes, {NE} elements")
@@ -666,21 +678,21 @@ def visualize_frame(output_file):
         print(f"  Hinge {h_num}: Element {el_num+1}, Node {nd_num+1}")
     
     # 1. Plot original geometry
-    fig1, ax1 = plot_frame_geometry(CORD, NTYPE, ECON, NCT, NE,
+    fig1, ax1 = plot_frame_geometry(CORD, DOF, ECON, NCT, NE,
                                     title=f"Frame {FN} - Original Geometry")
     plt.tight_layout()
-    plt.savefig(f'frame_{FN}_geometry.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: frame_{FN}_geometry.png")
+    plt.savefig(f'{path}frame_{FN}_geometry.pdf', dpi=150, bbox_inches='tight')
+    print(f"Saved: {path}frame_{FN}_geometry.pdf")
     plt.close(fig1)
     
     # 2. Plot deformed shapes for each hinge formation
     for idx, (hinge_info, disp, lf) in enumerate(zip(hinges, disp_history, load_factors)):
         hinges_so_far = hinges[:idx+1]
-        fig2, ax2 = plot_deformed_shape(CORD, NTYPE, ECON, NCT, NE, disp, lf,
+        fig2, ax2 = plot_deformed_shape(CORD, DOF, ECON, NCT, NE, disp, lf,
                                         scale=None, hinge_info=hinges_so_far)
         plt.tight_layout()
-        plt.savefig(f'frame_{FN}_deformed_hinge_{idx+1}.png', dpi=150, bbox_inches='tight')
-        print(f"Saved: frame_{FN}_deformed_hinge_{idx+1}.png")
+        plt.savefig(f'{path}frame_{FN}_deformed_hinge_{idx+1}.pdf', dpi=150, bbox_inches='tight')
+        print(f"Saved: {path}frame_{FN}_deformed_hinge_{idx+1}.pdf")
         plt.close(fig2)
     
     # 3. Plot moment diagrams for each hinge formation
@@ -689,24 +701,24 @@ def visualize_frame(output_file):
         fig3, ax3 = plot_moment_diagram(CORD, ECON, NCT, NE, moments, PM, lf,
                                         hinges=hinges_so_far)
         plt.tight_layout()
-        plt.savefig(f'frame_{FN}_moments_hinge_{idx+1}.png', dpi=150, bbox_inches='tight')
-        print(f"Saved: frame_{FN}_moments_hinge_{idx+1}.png")
+        plt.savefig(f'{path}frame_{FN}_moments_hinge_{idx+1}.pdf', dpi=150, bbox_inches='tight')
+        print(f"Saved: {path}frame_{FN}_moments_hinge_{idx+1}.pdf")
         plt.close(fig3)
     
     # 4. Plot axial force diagrams for final state
     if len(force_history) > 0:
         fig4, ax4 = plot_axial_diagram(CORD, ECON, NCT, NE, force_history[-1], load_factors[-1])
         plt.tight_layout()
-        plt.savefig(f'frame_{FN}_axial_final.png', dpi=150, bbox_inches='tight')
-        print(f"Saved: frame_{FN}_axial_final.png")
+        plt.savefig(f'{path}frame_{FN}_axial_{idx+1}.pdf', dpi=150, bbox_inches='tight')
+        print(f"Saved: {path}frame_{FN}_axial_{idx+1}.pdf")
         plt.close(fig4)
     
     # 5. Plot shear force diagrams for final state
     if len(moment_history) > 0:
         fig5, ax5 = plot_shear_diagram(CORD, ECON, NCT, NE, moment_history[-1], load_factors[-1])
         plt.tight_layout()
-        plt.savefig(f'frame_{FN}_shear_final.png', dpi=150, bbox_inches='tight')
-        print(f"Saved: frame_{FN}_shear_final.png")
+        plt.savefig(f'{path}frame_{FN}_shear_{idx+1}.pdf', dpi=150, bbox_inches='tight')
+        print(f"Saved: {path}frame_{FN}_shear_{idx+1}.pdf")
         plt.close(fig5)
     
     # 6. Create summary plot showing progressive collapse
@@ -767,8 +779,8 @@ def visualize_frame(output_file):
         plt.suptitle(f'Frame {FN} - Progressive Collapse Analysis',
                      fontsize=14, fontweight='bold')
         plt.tight_layout()
-        plt.savefig(f'frame_{FN}_summary.png', dpi=150, bbox_inches='tight')
-        print(f"Saved: frame_{FN}_summary.png")
+        plt.savefig(f'{path}frame_{FN}_summary.pdf', dpi=150, bbox_inches='tight')
+        print(f"Saved: {path}frame_{FN}_summary.pdf")
         plt.close(fig)
     
     print("\nVisualization complete!")

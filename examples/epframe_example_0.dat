@@ -8,16 +8,16 @@
    8    7   29000              # 8 nodes, 7 elements, steel
 
 # Node data: 
-# Fixed supports at nodes 1 and 8 (all DOFs = 0)
-# Node   X      Y  DFX DFY DFZ
- 1       0      0   0   0   0  # Left support (fixed)
- 2       0    168   1   1   1  # Left column top
- 3     120    252   1   1   1  # Roof nodes...
- 4     216    252   1   1   1
- 5     312    252   1   1   1
- 6     408    252   1   1   1
- 7     528    168   1   1   1  # Right column top
- 8     528      0   0   0   0  # Right support (fixed)
+# Reactions in all three coordinates at nodes 1 and 8
+# Node   X      Y  RX  RY  RZ
+ 1       0      0   1   1   1  # Left support (fixed)
+ 2       0    168   0   0   0  # Left column top
+ 3     120    252   0   0   0  # Roof nodes...
+ 4     216    252   0   0   0
+ 5     312    252   0   0   0
+ 6     408    252   0   0   0
+ 7     528    168   0   0   0  # Right column top
+ 8     528      0   1   1   1  # Right support (fixed)
 
 # Element data:
 # All elements: W14x68 section

@@ -22,11 +22,11 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 
 ## Files
 
-| File                  | Description                                 |
-| --------------------- | ------------------------------------------- |
-| `epframe.py`          | Main analysis program                       |
-| `epframe_viz.py`      | Visualization and plotting tools            |
-| `example_frame_5.dat` | Example input file (7-element portal frame) |
+| File                    | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `epframe.py`            | Main analysis program                       |
+| `epframe_viz.py`        | Visualization and plotting tools            |
+| `epframe_example_0.dat` | Example input file (7-element portal frame) |
 
 ## Installation
 
@@ -36,21 +36,12 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 pip install numpy matplotlib
 ```
 
-### Quick Start
+## Usage
+
+### Analysis Step
 
 ```bash
 # Run analysis
-python epframe.py example_frame_5.dat results.dat
-
-# Generate visualizations
-python epframe_viz.py results.dat
-```
-
-## Usage
-
-### Analysis
-
-```bash
 python epframe.py input_file output_file
 ```
 
@@ -59,101 +50,70 @@ python epframe.py input_file output_file
 - `output_file` - Human-readable results with deformations, moments, and reactions
 - `output_file.csv` - Compact numerical data for post-processing
 
-### Visualization
+### Visualization Step
 
 ```bash
+# Generate visualization figures from analysis results 
 python epframe_viz.py output_file
 ```
 
-**Generated Plots:**
+**Generated Plots in sub-directory ./plots/ :**
 
-- `frame_N_geometry.png` - Original frame layout with supports
-- `frame_N_deformed_hinge_X.png` - Deformed shape after each hinge
-- `frame_N_moments_hinge_X.png` - Bending moment diagrams
-- `frame_N_shear_final.png` - Shear force diagram (final state)
-- `frame_N_axial_final.png` - Axial force diagram (final state)
-- `frame_N_summary.png` - 4-panel progressive collapse summary
+- `frame_N_geometry.pdf` - Original frame layout with supports
+- `frame_N_deformed_hinge_X.pdf` - Deformed shape after each hinge
+- `frame_N_moments_hinge_X.pdf` - Bending moment diagrams
+- `frame_N_shear_X.pdf` - Shear force diagram (final state only)
+- `frame_N_axial_X.pdf` - Axial force diagram (final state only)
+- `frame_N_summary.pdf` - 4-panel progressive collapse summary
 
 ## Input File Format
 
 ```
-Frame_Number
-NCT  NE  E                           # Nodes, Elements, Young's modulus
-
-# Node Data (NCT lines)
-Node  X  Y  DFX  DFY  DFZ            # Coordinates and DOF flags
-
-# Element Data (NE lines)  
-Elem  N1  N2  I  A  Mp               # Connectivity, properties, plastic moment
-
-LN                                   # Number of loaded nodes
-
-# Load Data (LN lines)
-Node  FX  FY  MZ                     # Applied forces and moment
-```
-
-### Coordinate System
-
-- **X-axis**: Horizontal (→)
-- **Y-axis**: Vertical (↑)
-- **Z-axis**: Out of plane (rotation follows right-hand rule)
-
-### Degree of Freedom Flags
-
-- **0** = Fixed (restrained)
-- **1** = Free (unrestrained)
-
-### Units
-
-Maintain consistent units throughout. Example using US customary:
-
-- Length: inches
-- Force: kips
-- Moment: in-kips
-- Stress: ksi
-- Moment of Inertia (I): in⁴
-- Area: in²
-
-## Example Input File
-
-```
-# EPFRAME Example: 7-Element Portal Frame
+# EPFRAME Example Input File
+# 7-element portal frame with lateral and gravity loads
 # Units: inches, kips, ksi
 
-5                                   # Frame number
+0                              # Frame number
 
-8   7   29000                       # 8 nodes, 7 elements, E=29000 ksi
+# NCT  NE   E (ksi)
+   8    7   29000              # 8 nodes, 7 elements, steel
 
-# Node data: fixed supports at nodes 1 and 8
-# Node  X     Y  DFX  DFY  DFZ      # Coordinates and DOF flags
-1       0     0   0    0    0       # Fixed support (left)
-2       0   168   1    1    1       # Column top (left)
-3     120   252   1    1    1       # Roof nodes
-4     216   252   1    1    1
-5     312   252   1    1    1
-6     408   252   1    1    1
-7     528   168   1    1    1       # Column top (right)
-8     528     0   0    0    0       # Fixed support (right)
+# Node data: 
+# Reactions in all three coordinates at nodes 1 and 8 
+# Node   X      Y  RX  RY  RZ
+ 1       0      0   1   1   1  # Left support (fixed)
+ 2       0    168   0   0   0  # Left column top
+ 3     120    252   0   0   0  # Roof nodes...
+ 4     216    252   0   0   0
+ 5     312    252   0   0   0
+ 6     408    252   0   0   0
+ 7     528    168   0   0   0  # Right column top
+ 8     528      0   1   1   1  # Right support (fixed)
 
-# Element data: W14x68 sections
-# Elem  N1  N2     I     A      Mp  # Connectivity, properties, plastic moment
-1        1   2   954   19.7   4680  # Left column
-2        2   3   954   19.7   4680  # Roof elements
-3        3   4   954   19.7   4680
-4        4   5   954   19.7   4680
-5        5   6   954   19.7   4680
-6        6   7   954   19.7   4680
-7        7   8   954   19.7   4680  # Right column
+# Element data:
+# All elements: W14x68 section
+# Element N1  N2  I(in^4)  A(in^2)  Mp(in-kips)
+ 1         1   2   954      19.7    4680   # Left column
+ 2         2   3   954      19.7    4680   # Roof elements
+ 3         3   4   954      19.7    4680
+ 4         4   5   954      19.7    4680   # Center span
+ 5         5   6   954      19.7    4680
+ 6         6   7   954      19.7    4680
+ 7         7   8   954      19.7    4680   # Right column
 
-5                                   # 5 loaded nodes
+# Number of loaded nodes
+5
 
-# Loads: lateral + gravity
-# Node   FX     FY    MZ            # Applied forces and moment
-2       0.50   0.00   0.0           # Lateral at node 2
-3       0.25  -1.00   0.0           # Combined at node 3
-4       0.00  -1.00   0.0           # Gravity loads
-5       0.00  -1.00   0.0
-6       0.00  -1.00   0.0
+# Load data:
+# Lateral load at node 2, gravity loads at roof nodes
+# Node  FX(kips)  FY(kips)  MZ(in-kips)
+ 2       0.5       0         0    # Lateral push
+ 3       0.25     -1         0    # Combined lateral + gravity
+ 4       0        -1         0    # Gravity only
+ 5       0        -1         0
+ 6       0        -1         0
+
+# End of input file
 ```
 
 ## Output Format
@@ -162,7 +122,7 @@ Maintain consistent units throughout. Example using US customary:
 
 ```
 %
-%     ELASTIC PLASTIC ANALYSIS OF FRAME NO   5
+%     ELASTIC PLASTIC ANALYSIS OF FRAME NO 0
 %     ---------------------------------------
 %
 %     * GENERAL DATA
@@ -170,10 +130,39 @@ Maintain consistent units throughout. Example using US customary:
 %          NUMBER OF ELEMENTS           7
 %          MOD OF ELASTICITY       29000.0
 %
+%
 %     * DATA FOR NODES
-%           NODE   X-COORD   Y-COORD   DFX   DFY   DFZ
-%             1        0.00      0.00     0     0     0
-%             ...
+%           NODE   X-COORD   Y-COORD    RX    RY    RZ
+%
+%             1        0.00      0.00     1     1     1
+%             2        0.00    168.00     0     0     0
+%             3      120.00    252.00     0     0     0
+%             4      216.00    252.00     0     0     0
+%             5      312.00    252.00     0     0     0
+%             6      408.00    252.00     0     0     0
+%             7      528.00    168.00     0     0     0
+%             8      528.00      0.00     1     1     1
+%
+%     * DATA FOR ELEMENTS
+%         ELEMENT    N1      N2       IXX      AREA        MP
+%
+%             1        1       2    954.00     19.70   4680.00
+%             2        2       3    954.00     19.70   4680.00
+%             3        3       4    954.00     19.70   4680.00
+%             4        4       5    954.00     19.70   4680.00
+%             5        5       6    954.00     19.70   4680.00
+%             6        6       7    954.00     19.70   4680.00
+%             7        7       8    954.00     19.70   4680.00
+%
+%     * DATA FOR LOADS
+%           NODE        PX        PY        PZ
+%             2        0.50      0.00      0.00
+%             3        0.25     -1.00      0.00
+%             4        0.00     -1.00      0.00
+%             5        0.00     -1.00      0.00
+%             6        0.00     -1.00      0.00
+%
+%
 %
 %     * PLASTIC HINGE   1 FORMED IN ELEMENT   7 NEAR NODE   8 WHEN LOAD FACTOR IS       30.795
 %
@@ -181,17 +170,162 @@ Maintain consistent units throughout. Example using US customary:
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
 %                  2     -0.15074     -0.01714      0.00306
-%                  ...
+%                  3      0.49325     -0.96818      0.00970
+%                  4      0.48457     -1.68715      0.00375
+%                  5      0.47589     -1.55893     -0.00624
+%                  6      0.46721     -0.68904     -0.00999
+%                  7      0.91128     -0.01908      0.00206
+%                  8      0.00000      0.00000      0.00000
 %
 %          CUMULATIVE MOMENTS
 %             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
-%                  1       1895.62   2904.68      1 AND 2       4680.00
-%                  ...
+%                  1       1895.62    2904.68      1 AND 2       4680.00
+%                  2      -2904.68    -396.48      2 AND 3       4680.00
+%                  3        396.48   -3035.95      3 AND 4       4680.00
+%                  4       3035.95   -2719.15      4 AND 5       4680.00
+%                  5       2719.15     553.93      5 AND 6       4680.00
+%                  6       -553.93    4000.41      6 AND 7       4680.00
+%                  7      -4000.41   -4680.00      7 AND 8       4680.00
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -58.29
+%                  2         -69.45
+%                  3         -51.67
+%                  4         -51.67
+%                  5         -51.67
+%                  6         -79.54
+%                  7         -64.89
 %
 %          REACTIONS AT SUPPORTS
-%                NODE       RX           RY           MZ
+%                NODE       FX           FY           MZ
 %                  1        28.57        58.29     -1895.62
 %                  8       -51.67        64.89      4680.00
+%
+%
+%
+%     * PLASTIC HINGE   2 FORMED IN ELEMENT   7 NEAR NODE   7 WHEN LOAD FACTOR IS       34.400
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2     -0.06975     -0.01901      0.00426
+%                  3      0.70473     -1.15926      0.01121
+%                  4      0.69537     -1.97622      0.00413
+%                  5      0.68601     -1.81340     -0.00729
+%                  6      0.67665     -0.80335     -0.01161
+%                  7      1.19660     -0.02145      0.00239
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
+%                  1       1811.96    3213.66      1 AND 2       4680.00
+%                  2      -3213.66    -587.26      2 AND 3       4680.00
+%                  3        587.26   -3491.69      3 AND 4       4680.00
+%                  4       3491.69   -3093.74      4 AND 5       4680.00
+%                  5       3093.74     606.60      5 AND 6       4680.00
+%                  6       -606.60    4680.00      6 AND 7       4680.00
+%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -64.65
+%                  2         -75.67
+%                  3         -55.71
+%                  4         -55.71
+%                  5         -55.71
+%                  6         -87.47
+%                  7         -72.95
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ
+%                  1        29.91        64.65     -1811.96
+%                  8       -55.71        72.95      4680.00
+%
+%
+%
+%     * PLASTIC HINGE   3 FORMED IN ELEMENT   4 NEAR NODE   4 WHEN LOAD FACTOR IS       38.937
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.46343     -0.02200      0.01002
+%                  3      1.77180     -1.92712      0.01702
+%                  4      1.76244     -3.16360      0.00675
+%                  5      1.75307     -3.04862     -0.00898
+%                  6      1.74371     -1.68029     -0.01720
+%                  7      2.87444     -0.02380     -0.00574
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
+%                  1        576.12    3877.83      1 AND 2       4680.00
+%                  2      -3877.83   -1236.57      2 AND 3       4680.00
+%                  3       1236.57   -4680.00      3 AND 4       4680.00
+%                  4       4680.00   -4385.48      4 AND 5       4680.00
+%                  5       4385.48    -353.02      5 AND 6       4680.00
+%                  6        353.02    4680.00      6 AND 7       4680.00
+%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -74.81
+%                  2         -80.57
+%                  3         -55.71
+%                  4         -55.71
+%                  5         -55.71
+%                  6         -92.06
+%                  7         -80.94
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ
+%                  1        26.51        74.81      -576.12
+%                  8       -55.71        80.94      4680.00
+%
+%
+%
+%     * PLASTIC HINGE   4 FORMED IN ELEMENT   2 NEAR NODE   2 WHEN LOAD FACTOR IS       40.297
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.93090     -0.02323      0.01542
+%                  3      2.83075     -2.77427      0.02525
+%                  4      2.82138     -4.83126      0.01546
+%                  5      2.81202     -4.24998     -0.01400
+%                  6      2.80266     -2.37574     -0.02272
+%                  7      4.41972     -0.02417     -0.01167
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
+%                  1       -397.48    4680.00      1 AND 2       4680.00
+%                  2      -4680.00    -965.31      2 AND 3       4680.00
+%                  3        965.31   -4680.00      3 AND 4       4680.00
+%                  4       4680.00   -4526.14      4 AND 5       4680.00
+%                  5       4526.14    -503.72      5 AND 6       4680.00
+%                  6        503.72    4680.00      6 AND 7       4680.00
+%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -78.99
+%                  2         -82.69
+%                  3         -55.71
+%                  4         -55.71
+%                  5         -55.71
+%                  6         -92.78
+%                  7         -82.20
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ
+%                  1        25.49        78.99       397.48
+%                  8       -55.71        82.20      4680.00
+%
+%     *** DEFORMATIONS LARGER THAN 1000.0 IN CYCLE NO    5
+%
+%
+%     ANALYSIS COMPLETED FOR FRAME NO   0 AT LOAD FACTOR 40.297 
 ```
 
 ### CSV Output File
@@ -199,7 +333,7 @@ Maintain consistent units throughout. Example using US customary:
 The CSV file contains one header row followed by data rows for each load step:
 
 ```csv
-NCYCL,EL,ND,CLG,CX1_X,CX1_Y,CX1_R,...,CM1_1,CM1_2,...,CT1,...
+NCYCL,EL,NH,CLF,CD1_X,CD1_Y,CD1_R,...,CM1_1,CM1_2,...,CT1,...
 0,0,0,0.000000E+00,0.000000E+00,...
 1,7,8,3.079452E+01,-1.507380E-01,...
 ```
@@ -208,11 +342,11 @@ Columns:
 
 - `NCYCL` - Cycle number (0=initial, 1+=after each hinge)
 - `EL` - Element where hinge formed
-- `ND` - Node where hinge formed
-- `CLG` - Cumulative load factor
-- `CXn_X/Y/R` - Cumulative displacements at node n
+- `NH` - Node where hinge formed
+- `CLF` - Cumulative load factor (lambda)
+- `CDn_X/Y/R` - Cumulative displacements at node n
 - `CMn_1/2` - Cumulative moments at element n ends
-- `CTn` - Cumulative axial force in element n
+- `CTn` - Cumulative tension forces in element n
 
 ## Algorithm
 
@@ -226,7 +360,7 @@ Columns:
    - Form global stiffness matrix: K = C^T · S · C
    - Solve for displacements: K · δ = P
    - Calculate member forces: F = S · C · δ
-   - Find load factor λ to first plastic hinge: λ = (Mp - M) / ΔM
+   - Find load factor λ to next plastic hinge: λ = (Mp - M) / ΔM
    - Update cumulative values (displacements, moments, forces)
    - Modify stiffness at plastic hinge location
    - Repeat until mechanism forms
@@ -234,7 +368,7 @@ Columns:
 3. **Plastic Hinge Modification**
    
    - Near-end (hinge location): Stiffness → 0, moment fixed at the value Mp
-   - Far-end: Stiffness reduced to 75% (cantilever effect)
+   - Far-end: Stiffness reduced to 75% (cantilever effect) .. 4EI/L -> 3EI/L
 
 4. **Termination Conditions**
    
@@ -259,11 +393,11 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ### Progressive Collapse
 
-![Progressive Collapse Summary](plots/frame_0_summary.png)
+![Progressive Collapse Summary](examples/plots/frame_0_summary.pdf-1.png)
 
 ### Bending Moment Diagram
 
-![Moment Diagram](plots/frame_0_moments_hinge_4.png)
+![Moment Diagram](examples/plots/frame_0_moments_hinge_4.pdf-1.png)
 
 ## Limitations
 
@@ -296,7 +430,7 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ## References
 
-1. Hacksoo Lee, "EPFRAME.F", University of Michigan, 1986
+1. Hacksoo Lee and Subhash Goel, "EPFRAME.F", University of Michigan, 1986
 2. Neal, B.G., "The Plastic Methods of Structural Analysis", Chapman & Hall
 3. Chen, W.F. and Sohal, I., "Plastic Design and Second-Order Analysis of Steel Frames", Springer
 
@@ -306,5 +440,5 @@ This implementation is based on public domain FORTRAN code and is now licensed u
 
 ## Author
 
-Original FORTRAN: Hacksoo Lee (1986)  
+Original FORTRAN: Hacksoo Lee and Subhash Goel, University of Michigan (1986) 
 Python Translation: Duke University Civil & Environmental Engineering
