@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 """
 EPFRAME Visualization Tools
 Plots frame geometry, deformed shape, and force diagrams

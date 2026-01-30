@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 """
 ELASTIC PLASTIC ANALYSIS OF A PLANE FRAME
 Translated from FORTRAN epframe.f by Hacksoo Lee, 1986
