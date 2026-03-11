@@ -1,0 +1,47 @@
+# EPFRAME Example Input File with One-Way Reactions
+# 7-element portal frame with lateral and gravity loads
+# Units: inches, kips, ksi
+
+0                              # Frame number
+
+# NCT  NE   E (ksi)
+   8    7   29000              # 8 nodes, 7 elements, steel
+
+# Node data with new reaction format:
+# Reaction types: 0=free, *=bidirectional, +=positive only, -=negative only
+# Format: Node  X  Y  fixity_X  fixity_Y  fixity_Z
+
+# Node   X      Y    RX    RY    RZ
+ 1       0      0    X*    Y*    Z*        # Left support (fully fixed, bidirectional)
+ 2       0    168    0     0     0         # Left column top (free)
+ 3     120    252    0     0     0         # Roof nodes (free)
+ 4     216    252    0     0     0
+ 5     312    252    0     0     0
+ 6     408    252    0     0     0
+ 7     528    168    0     0     0         # Right column top (free)
+ 8     528      0    X*    Y*    Z*        # Right support (fully fixed, bidirectional)
+
+# Element data:
+# All elements: W14x68 section
+# Element N1  N2  I(in^4)  A(in^2)  Mp(in-kips)
+ 1         1   2   954      19.7    4680   # Left column
+ 2         2   3   954      19.7    4680   # Roof elements
+ 3         3   4   954      19.7    4680
+ 4         4   5   954      19.7    4680   # Center span
+ 5         5   6   954      19.7    4680
+ 6         6   7   954      19.7    4680
+ 7         7   8   954      19.7    4680   # Right column
+
+# Number of loaded nodes
+5
+
+# Load data:
+# Lateral load at node 2, gravity loads at roof nodes
+# Node  FX(kips)  FY(kips)  MZ(in-kips)
+ 2       0.5       0         0    # Lateral push
+ 3       0.25     -1         0    # Combined lateral + gravity
+ 4       0        -1         0    # Gravity only
+ 5       0        -1         0
+ 6       0        -1         0
+
+# End of input file

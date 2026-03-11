@@ -1,0 +1,12 @@
+Reaction Format for EPFRAME v2 - with one-way reactions 
+
+X*  or  X  or  X1  →  X direction: bidirectional (standard pin/fixed)
+X+  or  X2          →  X direction: positive only (can only push right)
+X-  or  X3          →  X direction: negative only (can only push left)
+0                   →  Free (no reaction)
+
+Examples:
+  X* Y* Z*    →  Fully fixed (all bidirectional)
+  X* Y* *     →  Pinned (X,Y fixed, rotation free)
+  0  Y+ Z*    →  Roller: can slide in X, can only push up in Y, rotation fixed
+  X+ Y- *     →  Can only push right in X, only pull down in Y, rotation free
