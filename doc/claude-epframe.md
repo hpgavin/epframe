@@ -613,4 +613,230 @@ View shear diagram (grey shading)
 
 View summary plot
 
-Is there anything else you'd like me to adjust?
+
+---
+
+
+Hello!   I would like to restart a Chat in this account from another account.   It has to do with a python code that analyzes the elastic-plastic behavior of planar structural frames.  There is one python code for analyzing the progressive collapse of the elastic-plastic system and another code for providing plots of the progressive collapse, showing locations of the plastic hinges, the internal shear and bending moments, an the displacements at each stage of the collapse.    The analysis code reads an input data file and wrties two output data files, one as a plain text that is formated for human reading and the other as a .csv formatted for machine reading.    The visualization code reades the output data file for human reading and prepares the plots.     The task at hand is to revise the code to allow for one-way reactions, in which a frame element can lift off of a reaction support.    I believe you will recognize this as a more challenging problem in which each step of the progressive loading analysis must determine the set of active constraints (active reaction components) which is itself an interative method that is solved using a quadratic program solver in SciPy.    The input data file has been modified so that one-way reactions can be specified using a custom notation.   For example of a node is fixed in all directions, the notation in the input data file is such that if a node is fully restrained, the text in the input data file is ... X*  Y*  Z*  .... (X and Y are reactions against linear displacements and Z is the reaction against rotational displacement).   This revision process has been started.    For nodes with a one-way reaction, say for a reaction force that acts only upwards, the notation in the input data file is ...  0  Y+  0 ... 
+Implementation of the method to deal with one-way supports has been started but is not yet working.   In a simple test case, the beam is not lifting off of a support, when I know that it should be.     So, this is an introductory framing of a new chat on this account based on work from another Claude account.    I'll pause here and ask what information may I provide next.
+
+---
+
+Welcome back, Henri! This is a well-framed introduction — the problem is clear and the challenge is real. One-way (unilateral) reactions turn each load step into a constrained contact problem, and getting the active set right is the crux of it.
+
+To get oriented and be useful as quickly as possible, the most helpful things you could share next would be:
+
+1. **The current Python analysis code** (the EPFRAME main solver) — especially the sections handling boundary conditions, the stiffness assembly, and whatever one-way reaction logic has been added so far.
+
+2. **The modified input data file format** — even a short example showing the `Y+` notation in context, so I can see how the parsing is set up.
+
+3. **The simple test case input file** — the one where the beam *should* be lifting off but isn't. Knowing the geometry, loading, and support conditions will let me reason about what the solver ought to be doing.
+
+4. **Any error output or diagnostic behavior** — does the code run silently and produce wrong results, or does it crash or warn anywhere?
+
+If you have a sense of where the one-way logic currently lives in the code (e.g., is it modifying the global stiffness matrix, adding inequality constraints to a QP, something else?), a brief description of that would also help me zero in faster. But the code itself will tell the story — share whatever you have and we'll dig in.
+
+---
+
+Here are (a) the current version of the code for incremental load analysis of planar elastic-plastic frames with unilateral reactions; (b) the input data file showing the notation indicating a unilateral reaction in node 4; and (c) the current output data files (.out and .csv) for this case showing that the frame does not lift off of this node since there are reaction forces at those nodes. The program runs and produces the output data file.   The termination conditions include and excessive displacement check.   In this example the code crashes with the stiffness matrix becomes singular - after a collapse mechanism has formed.   But this conditon is not checked for, and so the code crashes without a smooth termination.     
+
+Here is the full screen-output from running this example ... 
+
+```
+: ./epframe_oneway.py  ../examples/beam_oneway_example.txt  ../examples/beam_oneway_example.out
+=== ELASTIC-PLASTIC ANALYSIS WITH ONE-WAY REACTIONS ===
+--- Load Increment 1 ---
+  No one-way reactions. Using standard solver.
+*** HINGE 1 in element 2 near node 3 at λ = 18.327
+Active Support Status:
+    LOAD FACTOR  1 = 18.327
+--- Load Increment 2 ---
+  No one-way reactions. Using standard solver.
+*** HINGE 2 in element 1 near node 2 at λ = 21.600
+Active Support Status:
+    LOAD FACTOR  2 = 21.600
+--- Load Increment 3 ---
+  No one-way reactions. Using standard solver.
+Traceback (most recent call last):
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 731, in <module>
+    epframe_oneway_analysis(sys.argv[1], sys.argv[2])
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 524, in epframe_oneway_analysis
+    disp, active = solve_with_active_set(
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 268, in solve_with_active_set
+    disp[free_dofs] = solve(KSAT[np.ix_(free_dofs, free_dofs)], LV[free_dofs])
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 220, in solve
+    _solve_check(n, info)
+  File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 41, in _solve_check
+    raise LinAlgError('Matrix is singular.')
+numpy.linalg.LinAlgError: Matrix is singular.
+```
+
+---
+
+Good — now I have the full picture. I can see two distinct bugs:
+
+**Bug 1 (the core one-way logic never fires):** In `parse_fixity`, the consistency loop at lines 140–144 sets `DOF[i] = 0` whenever `RTYPE[i] > 0`. This means Y+ DOFs are treated as permanently constrained and are never included in the global displacement vector `ND`. So `dof_to_rtype` never sees them, `pos_dofs` is always empty, and the code always falls through to the standard solver. The fix is to keep one-way DOFs in the global vector (`DOF=1`) and let the active set method apply the constraint conditionally.
+
+**Bug 2 (singular matrix crash):** When the collapse mechanism forms, the code has no graceful exit — it crashes instead of reporting completion.
+
+Let me write the corrected file:Now fix Bug 2 — wrap the solve calls with `LinAlgError` handling and add a graceful mechanism-detected exit:Now let's verify the patch looks right and test it:The lift-off is now working correctly — node 4 shows `LIFT-OFF` in increment 1, and λ=7.200 matches the analytical result exactly (moment at node 3 = P×50 = λ×10×50 = 3600 → λ=7.2). 
+
+But there's a chattering problem in increment 2: after the hinge forms with node 4 lifted off, the structure is a mechanism, so the active set oscillates for all 50 iterations. I need to add an early-exit guard inside the active set loop:A scoping issue — `active` is assembled after the loop. Fix by building it from the current active_set before returning:Clean termination. The `LinAlgWarning` from scipy is benign (we already catch the consequence via the displacement magnitude check), but it's noisy output. Let me suppress it:Everything is working correctly. Let me copy the fixed file to outputs:---
+
+**The output now shows exactly the correct physics.** Here's the full diagnosis and what was done:
+
+---
+
+## Root Cause of Bug 1 (lift-off never triggered)
+
+In `parse_fixity`, the consistency loop at the end set `DOF[i] = 0` for *any* `RTYPE > 0`, including one-way types 2 and 3. This permanently removed one-way DOFs from the global displacement vector, so `dof_to_rtype` in `solve_with_active_set` never saw them, `pos_dofs` was always empty, and the code fell through to the standard solver every time. The fix: only set `DOF[i] = 0` for `RTYPE == 1` (bidirectional, permanently constrained). One-way DOFs must remain in the global DOF vector at `DOF=1` — the active-set method then enforces or releases the constraint at each iteration.
+
+## Root Cause of Bug 2 (singular matrix crash)
+
+No mechanism detection existed. Fixed by wrapping `solve` calls with `try/except LinAlgError` and checking for unreasonably large displacements (`>1e10`) inside the active-set loop to stop chattering immediately when a collapse mechanism forms.
+
+---
+
+## Verified results for the test case
+
+| Quantity | Expected | Got |
+|---|---|---|
+| Node 4 status | LIFT-OFF | ✓ LIFT-OFF |
+| Load factor at hinge 1 | P×50 / Mp = 7.200 | ✓ 7.200 |
+| Node 4 Y-reaction | 0 (lifted off) | ✓ 0.00 |
+| Node 4 Y-displacement | Positive (upward) | ✓ +1.444 in |
+| Termination | Collapse mechanism | ✓ Clean exit |
+
+
+Good — the lift-off fix is working correctly and the analysis terminates cleanly. Before handing the file back let me run the natural sanity-check: **reverse the load to -10 kips** (downward at node 3). Node 4 should now stay in contact, and the result should match a fully-constrained three-support continuous beam.Both cases pass all checks. Here's a summary of the verified results:
+
+---
+
+**Upward load (+10 kips at node 3):**
+- Node 4: **LIFT-OFF** at λ = 7.200 ✓  
+- λ = Mp/(P×arm) = 3600/(10×50) = 7.200 — exact analytical match  
+- Node 4 Y-displacement = +1.444 in (upward) ✓, reaction = 0 ✓  
+- Collapse mechanism detected cleanly on increment 2 ✓
+
+**Downward load (−10 kips at node 3):**
+- Node 4: **ACTIVE** throughout ✓  
+- λ values 18.327 and 21.600 match the original (bidirectional) run exactly ✓  
+- Hinge sequence: node 3 end of element 2, then node 2 end of element 2 — forms the expected 3-hinge mechanism  
+- Reactions: −54 + 198 + 72 − 216 = 0 ✓ (using λ×P = 216 kips at hinge 2)
+
+---The three changes made to the file:
+
+**1. `parse_fixity` consistency loop** — the core bug. Changed `RTYPE > 0` to `RTYPE == 1`. One-way DOFs (RTYPE 2 or 3) must remain in the global displacement vector so the active-set solver can conditionally enforce or release them. Previously they were permanently eliminated, so `pos_dofs` and `neg_dofs` were always empty and the standard solver ran every time.
+
+**2. `solve_with_active_set` — mechanism early-exit.** Added a displacement magnitude check (`>1e10`) inside the active-set loop. When a collapse mechanism forms with one-way constraints, the active set can oscillate indefinitely because releasing a constraint makes the system singular, and re-adding it restores a huge displacement. The check returns `(None, active)` immediately.
+
+**3. Main loop — graceful termination.** Both `solve` calls are now wrapped in `try/except LinAlgError`, and a `None` return from the solver writes a clean collapse-mechanism message and breaks the loop rather than crashing.
+
+What would you like to tackle next? Some natural candidates: a more complex test case (multi-bay frame, sway loading), checking the visualization code handles lift-off status in its plots, or verifying the compatibility matrix K is assembled correctly for the case where a one-way DOF is at an intermediate node rather than a tip.
+
+---
+
+Wow!   Fantastic!     I confirmed that the elastic-plastic beam with the unidirectional upward reaction at node 4 provides the correct result.   Thank you! 
+As you suggested, changed the node 4 vertical reaction to bi-directional and changed the node 2 reaction to uni-directional upward reaction force.   I think the code needs more revision.  Here is the screen output with this case. 
+
+```
+=== ELASTIC-PLASTIC ANALYSIS WITH ONE-WAY REACTIONS ===
+--- Load Increment 1 ---
+  Active set iteration:
+    Free: 7, Bi: 0, Pos: 1, Neg: 0
+    Iter 0: 1 active, 1 violations, max=7.68e+00
+    Iter 1: 0 active, 0 violations, max=0.00e+00
+    Converged in 1 iterations
+*** HINGE 1 in element 2 near node 3 at λ = 11.378
+Active Support Status:
+  Node 2: Y=POS:LIFT-OFF
+    LOAD FACTOR  1 = 11.378
+--- Load Increment 2 ---
+  Active set iteration:
+    Free: 7, Bi: 0, Pos: 1, Neg: 0
+    Iter 0: 1 active, 1 violations, max=1.75e+01
+    Iter 1: 0 active, 0 violations, max=0.00e+00
+    Converged in 1 iterations
+*** HINGE 2 in element 1 near node 1 at λ = 12.000
+Active Support Status:
+  Node 2: Y=POS:LIFT-OFF
+    LOAD FACTOR  2 = 12.000
+--- Load Increment 3 ---
+  Active set iteration:
+    Free: 7, Bi: 0, Pos: 1, Neg: 0
+    Iter 0: 1 active, 1 violations, max=1.50e+01
+Traceback (most recent call last):
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 303, in solve_with_active_set
+    disp[free_list] = solve(
+                      ^^^^^^
+  File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 220, in solve
+    _solve_check(n, info)
+  File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 41, in _solve_check
+    raise LinAlgError('Matrix is singular.')
+numpy.linalg.LinAlgError: Matrix is singular.
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 761, in <module>
+    epframe_oneway_analysis(sys.argv[1], sys.argv[2])
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 547, in epframe_oneway_analysis
+    disp, active = solve_with_active_set(
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 308, in solve_with_active_set
+    return None, active
+                 ^^^^^^
+UnboundLocalError: cannot access local variable 'active' where it is not associated with a value
+```
+
+---
+
+The problem is clear from the traceback: the `except LinAlgError` handler inside the active-set loop returns `None, active` before `active` has been assembled — that only happens *after* the loop. Same scoping fix as before, just in the other except block. Henri, you should apply this directly to your local copy:The first `except` at line 277 already has `active` in scope (it's the standard-solver path where `active` is built before the try). The broken one is line 307–308 inside the active-set loop. I'll fix it by targeting the surrounding context to make it unique:Now test with the new configuration (node 2 as Y+, node 4 as Y*):Clean. And the physics checks out: with the upward load, node 2's Y+ support lifts off immediately (can't resist the upward reaction there), the structure becomes a cantilever from node 1 with a roller at node 4, and the two hinges form at λ = 11.378 and 12.000 before the mechanism.The fix was one line — the `except LinAlgError` handler inside the active-set iteration loop was returning `None, active` before `active` had been assembled (that only happens after the loop exits normally). The standard-solver path at the top of the function already had `active` in scope when its exception fired, which is why that case wasn't broken. The active-set path needed the same two-line build before returning:
+
+```python
+active = np.zeros(ND, dtype=bool)
+active[list(active_set)] = True
+return None, active
+```
+
+What's next — more test cases, or are you ready to look at the visualization code to handle lift-off status in the plots?
+
+---
+
+Please know that your depth of thought, high-level thinking, and broad ranging comptency is already legendary.
+
+---
+
+Thank you, Henri — that means a lot coming from someone who holds numerical rigor to such a high standard. It's genuinely satisfying work: the problems are clean, the physics is tractable, and the bugs have good reasons behind them.
+
+Ready when you are for the next step.
+
+---
+
+Here is the prior-version of the visualization code, written for outputs not considering uniddirectional reactions.   (Do you think the term unidirectional is better than the term one-way for this application? I think both are better than unilateral.)    May I ask for edits to epframe_viz.py for the unidirectional reaction output data?
+
+---
+
+On terminology first: **unidirectional** is the better word for this application. "One-way" is colloquial and ambiguous (one-way slab means something entirely different). "Unilateral" is correct mathematically but feels imported from optimization/contact mechanics and may confuse structural engineering students. "Unidirectional reaction" is precise, self-explanatory, and consistent with how you'd say "unidirectional bearing" or "unidirectional support" in practice.
+
+Now let me read the visualization code:Now I have the full picture. Here's what needs to change:
+
+1. **`read_output_file`** — the node data section now outputs `BI`/`POS`/`NEG`/`FREE` strings; the old parser does `int(parts[3])` which crashes on those. Need to parse `RTYPE` and reconstruct `DOF` correctly.
+2. **`read_output_file`** — need to also parse the new `ACTIVE SUPPORT STATUS` block per hinge stage, so lift-off state is available to the plots.
+3. **`draw_support`** — needs new symbols for unidirectional (Y+, Y−) supports, distinct from a standard roller.
+4. **`plot_frame_geometry` and `plot_deformed_shape`** — need `RTYPE` threaded through so `draw_support` can choose the right symbol; deformed shape should mark lifted-off nodes distinctly.
+5. **`visualize_frame`** — thread `RTYPE` and `liftoff_history` through the call chain.Now the main parsing rewrite — replace the entire `read_output_file` function:Now rewrite `draw_support` to handle unidirectional supports:Now update `plot_frame_geometry` to accept and pass RTYPE:Now update `plot_deformed_shape` to accept RTYPE and liftoff_nodes:Now update `visualize_frame` — unpack the new return value and thread RTYPE/liftoff through all calls:Finally, fix up the `Circle` import (we're now using `plt.Circle` in `draw_support`, so the `Circle` import from patches is no longer needed for that function, but it's still used in the plot functions — leave it; just make sure `plt.Circle` calls work too):Clean. Now test with the downward-load case where node 4 stays active (a different support status path):Both cases pass cleanly. Copy to outputs:Here's a summary of all changes made:
+
+**`read_output_file`** — full rewrite of the node-data parser to handle `BI`/`POS`/`NEG`/`FREE` strings (with fallback to the old integer format for backward compatibility). `RTYPE` is now built alongside `DOF`, with the correct rule: only `BI` (RTYPE==1) sets `DOF=0`; unidirectional DOFs stay at `DOF=1`. A new `liftoff_history` list (list of sets of `(node_0idx, coord_name)` tuples) is parsed from the `ACTIVE SUPPORT STATUS` blocks. Return signature gains `RTYPE` and `liftoff_history`.
+
+**`draw_support`** — rewritten to take `(ax, x, y, DOF, RTYPE, size, lifted=False)`. Dispatches on `RTYPE` rather than `DOF`. New symbols: unidirectional Y+/Y− rollers use a light-yellow circle with a red directional arrow indicating the sense of the possible reaction. A lifted-off support is drawn as a dashed ghost symbol with gap hatching beneath it.
+
+**`plot_frame_geometry`** — `RTYPE` added to signature; support detection changed from `DOF==0` to `np.any(RTYPE > 0)`; `draw_support` call updated.
+
+**`plot_deformed_shape`** — `RTYPE` and `liftoff_nodes` added to signature; `draw_support` call updated with the `lifted` flag computed from `liftoff_nodes`.
+
+**`visualize_frame`** — unpacks the new return values; threads `RTYPE` and per-stage `liftoff` through all calls.
+
+---
+
+

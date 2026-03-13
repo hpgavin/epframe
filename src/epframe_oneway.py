@@ -16,8 +16,11 @@ Nomenclature:
 
 import numpy as np
 import sys
+import warnings
 from math import sqrt
 from scipy.linalg import solve
+from scipy.linalg import LinAlgWarning
+from numpy.linalg import LinAlgError
 
 def get_csv_header(NCT, NE):
     """Generate CSV header row"""
@@ -136,12 +139,16 @@ def parse_fixity(fixity_str):
             DOF[coord_idx] = 1
             RTYPE[coord_idx] = 0  # Free
     
-    # Ensure consistency
+    # Ensure consistency:
+    #   Bidirectional (RTYPE==1): permanently constrained, excluded from global DOF vector (DOF=0)
+    #   One-way (RTYPE==2 or 3): conditionally constrained; MUST stay in global DOF vector (DOF=1)
+    #                             so the active-set solver can enforce or release the constraint
+    #   Free (RTYPE==0): unconstrained, included in global DOF vector (DOF=1)
     for i in range(3):
-        if RTYPE[i] > 0:
-            DOF[i] = 0
+        if RTYPE[i] == 1:
+            DOF[i] = 0   # permanently removed from displacement vector
         else:
-            DOF[i] = 1
+            DOF[i] = 1   # in displacement vector (free or conditionally constrained)
     
     return DOF, RTYPE
 
@@ -265,7 +272,10 @@ def solve_with_active_set(KSAT, LV, ND, DOF, RTYPE, NCT,
         
         disp = np.zeros(ND)
         free_dofs = np.array(free_dofs)
-        disp[free_dofs] = solve(KSAT[np.ix_(free_dofs, free_dofs)], LV[free_dofs])
+        try:
+            disp[free_dofs] = solve(KSAT[np.ix_(free_dofs, free_dofs)], LV[free_dofs])
+        except (LinAlgError, np.linalg.LinAlgError):
+            return None, active
         return disp, active
     
     # Active set iteration
@@ -287,10 +297,25 @@ def solve_with_active_set(KSAT, LV, ND, DOF, RTYPE, NCT,
         
         # Solve
         disp = np.zeros(ND)
-        disp[free_list] = solve(
-            KSAT[np.ix_(free_list, free_list)],
-            LV[free_list] - KSAT[np.ix_(free_list, active_list)] @ disp[active_list]
-        )
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', LinAlgWarning)
+                disp[free_list] = solve(
+                    KSAT[np.ix_(free_list, free_list)],
+                    LV[free_list] - KSAT[np.ix_(free_list, active_list)] @ disp[active_list]
+                )
+        except (LinAlgError, np.linalg.LinAlgError):
+            active = np.zeros(ND, dtype=bool)
+            active[list(active_set)] = True
+            return None, active
+        
+        # Early exit: if displacements are unreasonably large, a mechanism has formed
+        if np.max(np.abs(disp)) > 1.0e10:
+            if verbose:
+                print(f"    Iter {iteration}: collapse mechanism detected (disp={np.max(np.abs(disp)):.2e})")
+            active = np.zeros(ND, dtype=bool)
+            active[list(active_set)] = True
+            return None, active
         
         # Reactions
         Rv = KSAT @ disp - LV
@@ -525,6 +550,13 @@ def epframe_oneway_analysis(input_file, output_file,
             KSAT, LV, ND, DOF, RTYPE, NCT,
             tol_contact, max_contact_iter, verbose=True
         )
+        
+        if disp is None:
+            msg = (f"     *** COLLAPSE MECHANISM DETECTED IN CYCLE {NCYCL}: "
+                   f"STIFFNESS MATRIX IS SINGULAR\n")
+            fp.write(f"%\n%{msg}%\n")
+            print(f"\n{msg.strip()}")
+            break
         
         # Check deformations
         DLMT = 1000.0

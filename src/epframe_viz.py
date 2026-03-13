@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#! /usr/bin/env -S python3 -i
 """
 EPFRAME Visualization Tools
 Plots frame geometry, deformed shape, and force diagrams
@@ -9,7 +9,6 @@ Uses 0-indexed numpy arrays internally, 1-indexed for display
 
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend to avoid display issues
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon, FancyBboxPatch
 import sys
@@ -18,214 +17,301 @@ import os
 
 def read_output_file(filename):
     """
-    Read output file and extract all data including input echo and results
-    Returns geometry, element data, and analysis results
+    Read output file and extract all data including input echo and results.
+    Handles both old numeric DOF format (0/1) and new string format (BI/POS/NEG/FREE).
+    Returns geometry, element data, RTYPE, and analysis results including lift-off history.
     """
+    _RTYPE_MAP = {'FREE': 0, 'BI': 1, 'POS': 2, 'NEG': 3}
+
     with open(filename, 'r') as f:
         lines = f.readlines()
-    
-    # Initialize variables
-    FN = 0      # Frame number
-    NCT = 0     # Number of nodes
-    NE = 0      # Number of elements
-    E_mod = 0.0 # Modulus of elasticity
-    
-    CORD = None   # Node coordinates
-    ECON = None   # Element connectivity
-    PM = None     # Plastic moments
-    
-    # Parse header and input echo
+
+    FN = 0
+    NCT = 0
+    NE = 0
+    E_mod = 0.0
+    CORD = None
+    ECON = None
+    PM = None
+    DOF = None
+    RTYPE = None
+
+    # --- Pass 1: parse header / input echo ---
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        
-        # Frame number
+
         if 'FRAME NO' in line:
             parts = line.split()
             for j, p in enumerate(parts):
                 if p == 'NO':
                     FN = int(parts[j+1])
                     break
-        
-        # General data
-        if 'NUMBER OF NODES' in line:
-            NCT = int(line.split()[-1])
-        if 'NUMBER OF ELEMENTS' in line:
-            NE = int(line.split()[-1])
-        if 'MOD OF ELASTICITY' in line:
-            E_mod = float(line.split()[-1])
-        
-        # Node data section
+
+        if 'NUMBER OF NODES'    in line: NCT   = int(line.split()[-1])
+        if 'NUMBER OF ELEMENTS' in line: NE    = int(line.split()[-1])
+        if 'MOD OF ELASTICITY'  in line: E_mod = float(line.split()[-1])
+
         if 'DATA FOR NODES' in line:
-            # Skip header lines
-            i += 2
-            CORD = np.zeros((NCT, 2))
-            DOF = np.zeros((NCT, 3), dtype=int) # indicates degree-of-freedom coordinates
-            
+            i += 2  # skip section header and column-header line
+            CORD  = np.zeros((NCT, 2))
+            DOF   = np.zeros((NCT, 3), dtype=int)
+            RTYPE = np.zeros((NCT, 3), dtype=int)
+
             for nd in range(NCT):
                 i += 1
                 data_line = lines[i].replace('%', '').strip()
                 parts = data_line.split()
-                node_num = int(parts[0]) - 1  # Convert to 0-indexed
+                node_num = int(parts[0]) - 1  # 0-indexed
+
                 CORD[node_num, 0] = float(parts[1])
                 CORD[node_num, 1] = float(parts[2])
-                DOF[node_num, 0] = int(parts[3])
-                DOF[node_num, 1] = int(parts[4])
-                DOF[node_num, 2] = int(parts[5])
 
-            DOF = 1 - DOF  # change RCT 1 to DOF 0 and RCT 0 to DOF 1
-        
-        # Element data section
+                # Support new string format (BI/POS/NEG/FREE) and old integer format (0/1)
+                for coord in range(3):
+                    token = parts[3 + coord]
+                    if token in _RTYPE_MAP:
+                        # New format
+                        rt = _RTYPE_MAP[token]
+                    else:
+                        # Old format: 0 = free, 1 = bidirectional reaction
+                        rt = int(token)   # 1 → BI, 0 → FREE
+                    RTYPE[node_num, coord] = rt
+                    # Bidirectional supports are permanently constrained (excluded from DOF vec)
+                    # Unidirectional supports remain in DOF vec (active-set handles them)
+                    DOF[node_num, coord] = 0 if rt == 1 else 1
+
         if 'DATA FOR ELEMENTS' in line:
-            # Skip header lines
             i += 2
             ECON = np.zeros((NE, 2), dtype=int)
-            PM = np.zeros(NE)
-            
+            PM   = np.zeros(NE)
+
             for el in range(NE):
                 i += 1
                 data_line = lines[i].replace('%', '').strip()
                 parts = data_line.split()
-                elem_num = int(parts[0]) - 1  # Convert to 0-indexed
-                ECON[elem_num, 0] = int(parts[1]) - 1  # N1, 0-indexed
-                ECON[elem_num, 1] = int(parts[2]) - 1  # N2, 0-indexed
-                PM[elem_num] = float(parts[5])
-        
-        # Stop parsing input echo when we hit first data record or hinge
+                elem_num = int(parts[0]) - 1
+                ECON[elem_num, 0] = int(parts[1]) - 1
+                ECON[elem_num, 1] = int(parts[2]) - 1
+                PM[elem_num]      = float(parts[5])
+
         if 'PLASTIC HINGE' in line or (not line.startswith('%') and line and 'NCYCL' not in line):
             break
-        
+
         i += 1
-    
-    # Now parse analysis results
-    hinges = []
-    disp_history = []
+
+    # --- Pass 2: parse analysis results ---
+    hinges        = []
+    disp_history  = []
     moment_history = []
-    force_history = []
-    load_factors = []
-    
+    force_history  = []
+    load_factors  = []
+    liftoff_history = []   # list of sets: {(node_0idx, coord_name), ...} per stage
+
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        
-        # Look for plastic hinge formation
+
         if 'PLASTIC HINGE' in line and 'FORMED' in line:
             parts = line.replace('%', '').split()
-            
+
             try:
-                # Find indices of key words
-                hinge_idx = parts.index('HINGE') + 1
-                elem_idx = parts.index('ELEMENT') + 1
-                node_idx = parts.index('NODE') + 1
-                is_idx = parts.index('IS') + 1
-                
-                hinge_num = int(parts[hinge_idx])
-                elem_num = int(parts[elem_idx]) - 1  # Convert to 0-indexed
-                node_num = int(parts[node_idx]) - 1  # Convert to 0-indexed
-                load_factor = float(parts[is_idx])
-                
-                hinges.append((hinge_num, elem_num, node_num))
-                load_factors.append(load_factor)
-            except (ValueError, IndexError) as e:
+                hinge_num   = int(parts[parts.index('HINGE')   + 1])
+                elem_num    = int(parts[parts.index('ELEMENT')  + 1]) - 1
+                node_num    = int(parts[parts.index('NODE')     + 1]) - 1
+                load_factor = float(parts[parts.index('IS')     + 1])
+            except (ValueError, IndexError):
                 print(f"Warning: Could not parse hinge line: {line}")
                 i += 1
                 continue
-            
-            # Read cumulative deformations
+
+            hinges.append((hinge_num, elem_num, node_num))
+            load_factors.append(load_factor)
+
+            # --- active support status (lift-off) ---
+            liftoff_nodes = set()
+            j = i + 1
+            while j < len(lines):
+                sl = lines[j].strip()
+                if 'ACTIVE SUPPORT STATUS' in sl:
+                    j += 1
+                    while j < len(lines):
+                        sl2 = lines[j].strip().replace('%', '').strip()
+                        # Lines look like:  NODE   4: Y=POS:LIFT-OFF
+                        if not sl2 or 'CUMULATIVE' in sl2 or 'REACTIONS' in sl2:
+                            break
+                        if 'NODE' in sl2 and 'LIFT-OFF' in sl2:
+                            m = re.search(r'NODE\s+(\d+):(.*)', sl2)
+                            if m:
+                                nd_1 = int(m.group(1)) - 1  # 0-indexed
+                                # parse individual DOF tokens  e.g. Y=POS:LIFT-OFF
+                                for token in m.group(2).split(','):
+                                    if 'LIFT-OFF' in token:
+                                        coord = token.strip().split('=')[0]
+                                        liftoff_nodes.add((nd_1, coord))
+                        j += 1
+                    break
+                if 'CUMULATIVE' in sl:
+                    break
+                j += 1
+            liftoff_history.append(liftoff_nodes)
+
+            # --- cumulative deformations ---
             while i < len(lines) and 'X-DISP' not in lines[i]:
                 i += 1
-            i += 1  # Skip header line
-            
+            i += 1
+
             disp = np.zeros((NCT, 3))
             for j in range(NCT):
-                if i >= len(lines):
-                    break
+                if i >= len(lines): break
                 data_line = lines[i].strip().replace('%', '')
                 if not data_line or 'CUMULATIVE' in data_line or 'ELEMENT' in data_line:
                     break
                 parts = data_line.split()
                 if len(parts) >= 4 and parts[0].isdigit():
-                    nd = int(parts[0]) - 1  # Convert to 0-indexed
+                    nd = int(parts[0]) - 1
                     disp[nd, 0] = float(parts[1])
                     disp[nd, 1] = float(parts[2])
                     disp[nd, 2] = float(parts[3])
                 i += 1
             disp_history.append(disp)
-            
-            # Read cumulative moments
+
+            # --- cumulative moments ---
             while i < len(lines) and 'END MOMENTS' not in lines[i]:
                 i += 1
-            i += 1  # Skip header line
-            
+            i += 1
+
             moments = np.zeros((NE, 2))
             for j in range(NE):
-                if i >= len(lines):
-                    break
+                if i >= len(lines): break
                 data_line = lines[i].strip().replace('%', '')
                 if not data_line or 'CUMULATIVE' in data_line or 'TENSION' in data_line:
                     break
                 parts = data_line.split()
                 if len(parts) >= 3 and parts[0].isdigit():
-                    el = int(parts[0]) - 1  # Convert to 0-indexed
+                    el = int(parts[0]) - 1
                     moments[el, 0] = float(parts[1])
                     moments[el, 1] = float(parts[2])
                 i += 1
             moment_history.append(moments)
-            
-            # Read cumulative tension forces
+
+            # --- cumulative tension forces ---
             while i < len(lines) and 'TENSION' not in lines[i]:
                 i += 1
-            i += 1  # Skip header line
-            
+            i += 1
+
             forces = np.zeros(NE)
             for j in range(NE):
-                if i >= len(lines):
-                    break
+                if i >= len(lines): break
                 data_line = lines[i].strip().replace('%', '')
-                if not data_line or 'ANALYSIS' in data_line or 'PLASTIC' in data_line or 'REACTIONS' in data_line:
+                if not data_line or 'ANALYSIS' in data_line or 'PLASTIC' in data_line \
+                        or 'REACTIONS' in data_line:
                     break
                 parts = data_line.split()
                 if len(parts) >= 2 and parts[0].isdigit():
-                    el = int(parts[0]) - 1  # Convert to 0-indexed
+                    el = int(parts[0]) - 1
                     forces[el] = float(parts[1])
                 i += 1
             force_history.append(forces)
-        
-        i += 1
-    
-    return (FN, NCT, NE, E_mod, CORD, DOF, ECON, PM,
-            hinges, disp_history, moment_history, force_history, load_factors)
 
-def draw_support(ax, x, y, ntype, size):
-    """Draw support symbol based on DOF flags"""
-    # ntype = [dx_free, dy_free, rz_free]
-    # Fixed: all 0, Pinned: rotation free, Roller: one translation free
-    
-    if ntype[0] == 0 and ntype[1] == 0 and ntype[2] == 0:
-        # Fixed support - filled triangle with ground line
-        triangle = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
-                          closed=True, facecolor='gray', edgecolor='black', linewidth=1.5)
-        ax.add_patch(triangle)
-        # Ground hatching
+        i += 1
+
+    return (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM,
+            hinges, disp_history, moment_history, force_history,
+            load_factors, liftoff_history)
+
+def draw_support(ax, x, y, DOF, RTYPE, size, lifted=False):
+    """
+    Draw support symbol based on DOF flags and reaction types.
+
+    DOF[i]   : 0 = constrained, 1 = free
+    RTYPE[i] : 0 = free, 1 = bidirectional, 2 = positive-only, 3 = negative-only
+    lifted   : True when a unidirectional support has lifted off (draw gap symbol)
+
+    Support classification:
+      Fully fixed       : RTYPE == [1,1,1]  (no free DOFs)
+      Pinned            : RTYPE[0]==1, RTYPE[1]==1, RTYPE[2]==0
+      Bidirectional roller: one translation constrained bidirectionally, rotation free
+      Unidirectional roller: one translation constrained POS or NEG, rotation free
+    """
+    rx, ry, rz = RTYPE[0], RTYPE[1], RTYPE[2]
+
+    if lifted:
+        # Lifted-off unidirectional support: dashed outline + gap marker
+        circle = plt.Circle((x, y - size*0.5), size*0.35,
+                             facecolor='none', edgecolor='gray',
+                             linewidth=1.5, linestyle='--', zorder=2)
+        ax.add_patch(circle)
+        ax.plot([x - size, x + size], [y - size*0.9, y - size*0.9],
+                'k--', linewidth=1.5, alpha=0.5)
+        # Gap lines
+        for dx_g in [-size*0.4, 0, size*0.4]:
+            ax.plot([x + dx_g, x + dx_g - size*0.15],
+                    [y - size*0.9, y - size*1.2], 'k-', linewidth=1, alpha=0.4)
+        return
+
+    if rx == 1 and ry == 1 and rz == 1:
+        # Fully fixed — filled triangle + hatching
+        tri = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
+                      closed=True, facecolor='gray', edgecolor='black', linewidth=1.5)
+        ax.add_patch(tri)
         for j in range(5):
-            x_h = x - size + j * size * 0.5
-            ax.plot([x_h, x_h - size*0.3], [y - size*1.2, y - size*1.6], 'k-', linewidth=1)
-    
-    elif ntype[2] == 1 and (ntype[0] == 0 or ntype[1] == 0):
-        # Pinned support - hollow triangle
-        triangle = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
-                          closed=True, facecolor='white', edgecolor='black', linewidth=1.5)
-        ax.add_patch(triangle)
-        # Ground line
+            xh = x - size + j * size * 0.5
+            ax.plot([xh, xh - size*0.3], [y - size*1.2, y - size*1.6], 'k-', linewidth=1)
+
+    elif rx == 1 and ry == 1 and rz == 0:
+        # Pinned — hollow triangle + ground line
+        tri = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
+                      closed=True, facecolor='white', edgecolor='black', linewidth=1.5)
+        ax.add_patch(tri)
         ax.plot([x - size*1.2, x + size*1.2], [y - size*1.2, y - size*1.2], 'k-', linewidth=2)
-    
-    elif ntype[0] == 1 and ntype[1] == 0:
-        # Roller (vertical reaction only) - circle with triangle
-        circle = Circle((x, y - size*0.4), size*0.35, facecolor='white', edgecolor='black', linewidth=1.5)
+
+    elif ry == 1 and rx != 1:
+        # Standard bidirectional Y roller — circle + horizontal line
+        circle = plt.Circle((x, y - size*0.4), size*0.35,
+                             facecolor='white', edgecolor='black', linewidth=1.5)
         ax.add_patch(circle)
         ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
 
-def plot_frame_geometry(CORD, DOF, ECON, NCT, NE, title="Frame Geometry"):
+    elif ry == 2:
+        # Unidirectional Y+ roller (reaction force upward, resists downward displacement)
+        # Symbol: roller circle with upward arrow
+        circle = plt.Circle((x, y - size*0.4), size*0.35,
+                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
+        ax.add_patch(circle)
+        ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
+        ax.annotate('', xy=(x, y + size*0.1), xytext=(x, y - size*0.8),
+                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+
+    elif ry == 3:
+        # Unidirectional Y− roller (reaction force downward, resists upward displacement)
+        # Symbol: roller circle with downward arrow
+        circle = plt.Circle((x, y - size*0.4), size*0.35,
+                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
+        ax.add_patch(circle)
+        ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
+        ax.annotate('', xy=(x, y - size*0.8), xytext=(x, y + size*0.1),
+                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+
+    elif rx == 2:
+        # Unidirectional X+ roller (reaction force rightward)
+        circle = plt.Circle((x - size*0.4, y), size*0.35,
+                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
+        ax.add_patch(circle)
+        ax.plot([x - size*0.8, x - size*0.8], [y - size, y + size], 'k-', linewidth=2)
+        ax.annotate('', xy=(x + size*0.1, y), xytext=(x - size*0.8, y),
+                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+
+    elif rx == 3:
+        # Unidirectional X− roller (reaction force leftward)
+        circle = plt.Circle((x + size*0.4, y), size*0.35,
+                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
+        ax.add_patch(circle)
+        ax.plot([x + size*0.8, x + size*0.8], [y - size, y + size], 'k-', linewidth=2)
+        ax.annotate('', xy=(x - size*0.1, y), xytext=(x + size*0.8, y),
+                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+
+def plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE, title="Frame Geometry"):
     """Plot undeformed frame geometry with supports"""
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -254,9 +340,9 @@ def plot_frame_geometry(CORD, DOF, ECON, NCT, NE, title="Frame Geometry"):
     for nd in range(NCT):
         x, y = CORD[nd, 0], CORD[nd, 1]
         
-        # Draw support if any DOF is restrained
-        if DOF[nd, 0] == 0 or DOF[nd, 1] == 0:
-            draw_support(ax, x, y, DOF[nd], margin * 0.15)
+        # Draw support if any DOF is constrained
+        if np.any(RTYPE[nd] > 0):
+            draw_support(ax, x, y, DOF[nd], RTYPE[nd], margin * 0.15)
         
         # Draw node
         ax.plot(x, y, 'ko', markersize=8, zorder=3)
@@ -273,8 +359,8 @@ def plot_frame_geometry(CORD, DOF, ECON, NCT, NE, title="Frame Geometry"):
     
     return fig, ax
 
-def plot_deformed_shape(CORD, DOF, ECON, NCT, NE, disp, load_factor, 
-                        scale=None, hinge_info=None):
+def plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE, disp, load_factor,
+                        scale=None, hinge_info=None, liftoff_nodes=None):
     """Plot deformed shape with optional hinge markers"""
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -317,10 +403,17 @@ def plot_deformed_shape(CORD, DOF, ECON, NCT, NE, disp, load_factor,
         ax.text(x_def, y_def + margin * 0.08, f'{nd+1}', fontsize=10,
                 ha='center', va='bottom', zorder=4)
     
-    # Draw supports at original positions
+    # Draw supports at original positions; lifted-off supports shown with gap symbol
+    _coord_name = {0: 'X', 1: 'Y', 2: 'Z'}
     for nd in range(NCT):
-        if DOF[nd, 0] == 0 or DOF[nd, 1] == 0:
-            draw_support(ax, CORD[nd, 0], CORD[nd, 1], DOF[nd], margin * 0.12)
+        if np.any(RTYPE[nd] > 0):
+            # A support is lifted if any of its unidirectional DOFs are in liftoff_nodes
+            lifted = liftoff_nodes is not None and any(
+                (nd, _coord_name[c]) in liftoff_nodes
+                for c in range(3) if RTYPE[nd, c] in (2, 3)
+            )
+            draw_support(ax, CORD[nd, 0], CORD[nd, 1], DOF[nd], RTYPE[nd],
+                         margin * 0.12, lifted=lifted)
     
     # Draw plastic hinges
     if hinge_info:
@@ -669,8 +762,9 @@ def visualize_frame(output_file):
         print("sub-directory %s already exists" % path)
     
     # Read all data from output file
-    (FN, NCT, NE, E_mod, CORD, DOF, ECON, PM,
-     hinges, disp_history, moment_history, force_history, load_factors) = read_output_file(output_file)
+    (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM,
+     hinges, disp_history, moment_history, force_history,
+     load_factors, liftoff_history) = read_output_file(output_file)
     
     print(f"Frame {FN}: {NCT} nodes, {NE} elements")
     print(f"Found {len(hinges)} plastic hinges")
@@ -678,7 +772,7 @@ def visualize_frame(output_file):
         print(f"  Hinge {h_num}: Element {el_num+1}, Node {nd_num+1}")
     
     # 1. Plot original geometry
-    fig1, ax1 = plot_frame_geometry(CORD, DOF, ECON, NCT, NE,
+    fig1, ax1 = plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE,
                                     title=f"Frame {FN} - Original Geometry")
     plt.tight_layout()
     plt.savefig(f'{path}frame_{FN}_geometry.pdf', dpi=150, bbox_inches='tight')
@@ -688,8 +782,10 @@ def visualize_frame(output_file):
     # 2. Plot deformed shapes for each hinge formation
     for idx, (hinge_info, disp, lf) in enumerate(zip(hinges, disp_history, load_factors)):
         hinges_so_far = hinges[:idx+1]
-        fig2, ax2 = plot_deformed_shape(CORD, DOF, ECON, NCT, NE, disp, lf,
-                                        scale=None, hinge_info=hinges_so_far)
+        liftoff = liftoff_history[idx] if idx < len(liftoff_history) else set()
+        fig2, ax2 = plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE, disp, lf,
+                                        scale=None, hinge_info=hinges_so_far,
+                                        liftoff_nodes=liftoff)
         plt.tight_layout()
         plt.savefig(f'{path}frame_{FN}_deformed_hinge_{idx+1}.pdf', dpi=150, bbox_inches='tight')
         print(f"Saved: {path}frame_{FN}_deformed_hinge_{idx+1}.pdf")

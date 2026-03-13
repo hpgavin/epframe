@@ -25,9 +25,9 @@
 # Node data with one-way reactions:
 # Node   X      Y    RX    RY    RZ
  1       0      0    X*    Y*    Z*        # Node 1: Fully fixed (cantilever)
- 2     100      0    X*    Y*    0         # Node 2: Pinned (X,Y bidirectional, rotation free)
+ 2     100      0    0     Y+    0         # Node 2: One-way roller (Y can only resist UP, i.e., positive)
  3     150      0    0     0     0         # Node 3: Free (load point)
- 4     200      0    0     Y-    0         # Node 4: One-way roller (Y can only resist DOWN, i.e., negative)
+ 4     200      0    0     Y*    0         # Node 4: Pinned (X,Y bidirectional, rotation free)
 
 # Element data:
 # Using W12x50 section properties
@@ -42,7 +42,7 @@
 # Load data:
 # Apply UPWARD force at Node 3 (between supports 2 and 4)
 # Node  FX(kips)  FY(kips)  MZ(in-kips)
- 3       0        -10.0       0      # 10 kip upward force
+ 3       0         10.0       0      # 10 kip upward force
 
 # End of input file
 
