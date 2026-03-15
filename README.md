@@ -19,6 +19,7 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 - **Automatic Stiffness Modification**: Member stiffnesses adjust as hinges form
 - **Reaction Force Calculations**: Support reactions computed at each load step
 - **Visualization Suite**: Automatic generation of deformed shapes, moment diagrams, shear diagrams, and axial force diagrams
+- **Computation of Element Displacements Between Nodes**: Double integrating M(x)/EI between nodal displacements
 - **CSV Data Export**: Compact numerical data exported to CSV for post-processing
 - **Comment Support**: Input files can include `#` comments for documentation
 - **Modern Python**: Uses numpy for efficient matrix operations
@@ -553,20 +554,21 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ### Progressive Collapse
 
-![Progressive Collapse Summary](examples/plots/frame_0_summary.pdf-1.png)
+![Progressive Collapse Summary](examples/plots/frame_7_example-summary.png)
 
 ### Bending Moment Diagram
 
-![Moment Diagram](examples/plots/frame_0_moments_hinge_4.pdf-1.png)
+![Moment Diagram](examples/plots/frame_7_example-moments_hinge_04.png)
+
+### Load Displacement Diagram
+
+![Moment Diagram](examples/plots/frame_7_example-moments_hinge_04.png)
 
 ## Limitations
 
 - 2D plane frames only (no 3D analysis)
 - Concentrated loads at nodes only (no distributed loads)
-- Small displacement theory (no geometric nonlinearity)
 - Elastic-perfectly plastic material model
-- No member instability (buckling) checks
-- No P-Δ effects
 
 ## Troubleshooting
 
@@ -576,7 +578,7 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 - Verify support conditions provide adequate restraint
 - Ensure all elements are properly connected
 
-**"Deformations exceed 1000":**
+**"Deformations exceed Limit":**
 
 - Collapse mechanism has formed (expected behavior)
 - If unexpected, check plastic moment capacities
