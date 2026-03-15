@@ -1,0 +1,44 @@
+# EPFRAME Example Input File
+# Units: inches, kips, ksi
+
+A 7-element portal frame with lateral and gravity loads
+
+# NCT  NE   E (ksi)  Fy (ksi)
+   8    7   29000    24        # 8 nodes, 7 elements, steel
+
+# Node data: 
+# Reactions in all three coordinates at nodes 1 and 8
+# Node   X      Y  RX  RY  RZ
+ 1       0      0   1   1   1  # Left support (fixed)
+ 2       0    168   0   0   0  # Left column top
+ 3     120    252   0   0   0  # Roof nodes...
+ 4     216    252   0   0   0
+ 5     312    252   0   0   0
+ 6     408    252   0   0   0
+ 7     528    168   0   0   0  # Right column top
+ 8     528      0   1   1   1  # Right support (fixed)
+
+# Element data:
+# All elements: W14x68 section
+# Element N1  N2  I(in^4)  A(in^2)  Z (in^3)
+ 1         1   2   954      19.7    115.0   # Left column
+ 2         2   3   954      19.7    115.0   # Roof elements
+ 3         3   4   954      19.7    115.0
+ 4         4   5   954      19.7    115.0   # Center span
+ 5         5   6   954      19.7    115.0
+ 6         6   7   954      19.7    115.0
+ 7         7   8   954      19.7    115.0   # Right column
+
+# Number of loaded nodes
+5
+
+# Load data:
+# Lateral load at node 2, gravity loads at roof nodes
+# Node  FX(kips)  FY(kips)  MZ(in-kips)
+ 2       0.5       0         0    # Lateral push
+ 3       0.25     -1         0    # Combined lateral + gravity
+ 4       0        -1         0    # Gravity only
+ 5       0        -1         0
+ 6       0        -1         0
+
+# End of input file
