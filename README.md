@@ -26,14 +26,14 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 
 ## Files
 
-| File                    | Description                                 |
-| ----------------------- | ------------------------------------------- |
-| `epframe.py`            | Main analysis program                       |
-| `epframe_viz.py`        | Visualization and plotting tools            |
-| `square_tube.py`        | Section properties of square tube cross sections |
-| `beam_4_example.dat`    | Example input file (4-node beam)            |
-| `beam_7_example.dat`    | Example input file (7-node beam)            |
-| `frame_7_example.dat`   | Example input file (7-node gable frame)     |
+| File                  | Description                                      |
+| --------------------- | ------------------------------------------------ |
+| `epframe.py`          | Main analysis program                            |
+| `epframe_viz.py`      | Visualization and plotting tools                 |
+| `square_tube.py`      | Section properties of square tube cross sections |
+| `beam_4_example.dat`  | Example input file (4-node beam)                 |
+| `beam_7_example.dat`  | Example input file (7-node beam)                 |
+| `frame_7_example.dat` | Example input file (7-node gable frame)          |
 
 ## Installation
 
@@ -474,7 +474,6 @@ A 7-element gable frame with lateral and gravity loads
 %
 %
 %     ANALYSIS COMPLETED: A 7-element gable frame with lateral and gravity loads AT LOAD FACTOR 82.485
-
 ```
 
 ### CSV Output File
@@ -500,6 +499,7 @@ Columns:
 ## Algorithm
 
 **1. Initialization**
+
 - Parse title, material properties (E, Fy), section properties (I, A, Z), and support conditions (bidirectional, unidirectional +/−, or free) from input file
 - Derive plastic moment Mp = Z·Fy and axial yield force Py = A·Fy for each element
 - Build compatibility matrix **K** from frame geometry and element connectivity
@@ -508,28 +508,42 @@ Columns:
 - Write initial state to output and CSV files
 
 **2. Load Increment Loop**
+
 - Form elastic element stiffness matrix **S** from current SF and SA (modified at prior hinge locations)
+
 - Form global elastic stiffness: **K**_e = **K** · **S** · **K**^T
+
 - Assemble geometric stiffness **K**_g by transforming and scattering the 6×6 element geometric stiffness matrices (eq. 75, Bernoulli-Euler) weighted by current cumulative axial forces CT; add to form total stiffness: **K**_sat = **K**_e + **K**_g
+
 - Check for geometric instability: if **K**_sat has a negative eigenvalue, report buckling and stop
+
 - Solve for displacement rates δ using active-set iteration to enforce unidirectional reaction constraints: **K**_sat · δ = **P**, releasing any unidirectional support whose reaction force would act in the wrong direction
+
 - Calculate member force rates: **F** = **S** · **K**^T · δ; separate into moment rates (SATX_e2) and axial force rates (SATX_ct)
+
 - Check for compression yield: if |CT[el]| ≥ Py[el] for any element, report and stop
+
 - Warn if hinge count already exceeds DI (kinematic mechanism masked by geometric stiffness)
+
 - Find load factor α to next P-M hinge by solving the quadratic at each element end:
-
+  
   (Mp·ṗ²/Py²)·α² + (s·ṁ + 2·Mp·P₀·ṗ/Py²)·α + (s·M₀ − Mp(1 − P₀²/Py²)) = 0
-
+  
   where s = sign(M₀), ṁ = moment rate, ṗ = axial force rate, M₀ and P₀ are cumulative values; reduces exactly to the linear formula (Mp − |M₀|)/|ṁ| when ṗ ≈ 0
+
 - Scale all rates by α; update cumulative displacements CD, moments CM, and axial forces CT
+
 - Check cumulative displacements against DLMT; stop if exceeded
+
 - Write hinge location, active support status, deformations, moments (with Mp, Mu = Mp(1−(P/Py)²), and P/Py), axial forces, and reactions to output file
 
 **3. Plastic Hinge Modification**
+
 - At the hinge end (near-end): set both SF entries to zero — bending stiffness goes to zero, moment is locked at current CM value
 - At the far end of the same element: reduce the diagonal SF entry to 75% of its current value (4EI/L → 3EI/L for an intact element, reflecting the loss of far-end rotational restraint) and set the off-diagonal SF entry to zero
 
 **4. Termination Conditions** (in order of priority)
+
 - **Geometric instability (buckling):** minimum eigenvalue of **K**_sat < 0 before a hinge is found
 - **Collapse mechanism:** **K**_sat is singular (solve returns None); distinguished from buckling by the sign of the minimum eigenvalue — zero eigenvalue is a mechanism, negative is buckling
 - **Compression yield:** |P| ≥ Py in any element, signalling material instability in axial compression
@@ -562,7 +576,7 @@ The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 
 
 ### Load Displacement Diagram
 
-![Moment Diagram](examples/plots/frame_7_example-moments_hinge_04.png)
+![Moment Diagram](examples/plots/frame_7_example-load_displacement.png)
 
 ## Limitations
 
