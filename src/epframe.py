@@ -244,6 +244,116 @@ def read_input_file(filename):
     
     return title, NCT, NE, E, Fy, CORD, DOF, RTYPE, ECON, SMA, AREA, ZS, PM, PY, loads
 
+def build_geometric_stiffness(CORD, ECON, DOF, CT, OLEN_elems, NE, NCT, ND):
+    """
+    Assemble the global geometric stiffness matrix from current axial forces.
+
+    For a Bernoulli-Euler beam element with axial force N and length L the
+    local geometric stiffness matrix is (eq 75 in StructuralElements.pdf):
+
+        K̄_g = (N/L) × G̃
+
+    where G̃ is the dimensionless 6×6 matrix:
+
+        G̃ = [[0,    0,      0,       0,    0,       0     ],
+              [0,    6/5,    L/10,    0,   -6/5,     L/10  ],
+              [0,    L/10,   2L²/15,  0,   -L/10,   -L²/30 ],
+              [0,    0,      0,       0,    0,       0     ],
+              [0,   -6/5,   -L/10,    0,    6/5,    -L/10  ],
+              [0,    L/10,  -L²/30,   0,   -L/10,   2L²/15 ]]
+
+    Positive N (tension) increases lateral stiffness.
+    Negative N (compression) decreases lateral stiffness → buckling when det(Ke+Kg)=0.
+
+    The local matrix is transformed to global coordinates via T (the standard 6×6
+    beam element rotation matrix) and assembled into the ND×ND global DOF space,
+    with constrained DOFs omitted.
+
+    Parameters
+    ----------
+    CORD        (NCT,2) node coordinates
+    ECON        (NE,2)  element connectivity (0-indexed)
+    DOF         (NCT,3) free DOF flags (1=free, 0=constrained)
+    CT          (NE,)   cumulative axial tensions (positive=tension)
+    OLEN_elems  (NE,)   original element lengths
+    NE, NCT, ND         element / node / DOF counts
+
+    Returns
+    -------
+    KG  (ND,ND) global geometric stiffness matrix
+    """
+    KG = np.zeros((ND, ND))
+
+    # Pre-compute the starting global DOF index for each node
+    node_dof_start = np.zeros(NCT, dtype=int)
+    idx = 0
+    for nd in range(NCT):
+        node_dof_start[nd] = idx
+        idx += int(np.sum(DOF[nd]))
+
+    for el in range(NE):
+        N = CT[el]          # axial tension (positive = tension)
+        if abs(N) < 1.0e-14:
+            continue
+
+        n1, n2 = ECON[el, 0], ECON[el, 1]
+        L = OLEN_elems[el]
+
+        # Direction cosines
+        dx = CORD[n2, 0] - CORD[n1, 0]
+        dy = CORD[n2, 1] - CORD[n1, 1]
+        c  = dx / L
+        s  = dy / L
+
+        # Local geometric stiffness 6×6
+        fac = N / L
+        L2  = L * L
+        Kg_loc = fac * np.array([
+            [ 0,     0,        0,          0,     0,        0       ],
+            [ 0,   6/5,     L/10,          0,  -6/5,     L/10      ],
+            [ 0,  L/10,  2*L2/15,          0, -L/10,   -L2/30      ],
+            [ 0,     0,        0,          0,     0,        0       ],
+            [ 0,  -6/5,    -L/10,          0,   6/5,    -L/10      ],
+            [ 0,  L/10,   -L2/30,          0, -L/10,   2*L2/15     ]
+        ])
+
+        # Coordinate transformation matrix T (6×6)
+        T = np.array([
+            [ c, -s, 0,  0,  0, 0],
+            [ s,  c, 0,  0,  0, 0],
+            [ 0,  0, 1,  0,  0, 0],
+            [ 0,  0, 0,  c, -s, 0],
+            [ 0,  0, 0,  s,  c, 0],
+            [ 0,  0, 0,  0,  0, 1]
+        ])
+
+        # Global geometric stiffness for this element (6×6)
+        Kg_gl = T @ Kg_loc @ T.T
+
+        # Build mapping from local element DOF index (0..5) to global DOF index (-1 if fixed)
+        # Local order: [n1_x, n1_y, n1_z,  n2_x, n2_y, n2_z]
+        local_to_global = []
+        for nd, base in [(n1, node_dof_start[n1]), (n2, node_dof_start[n2])]:
+            offset = 0
+            for coord in range(3):
+                if DOF[nd, coord]:
+                    local_to_global.append(base + offset)
+                    offset += 1
+                else:
+                    local_to_global.append(-1)   # constrained — skip
+
+        # Scatter into KG
+        for i_loc, gi in enumerate(local_to_global):
+            if gi < 0:
+                continue
+            for j_loc, gj in enumerate(local_to_global):
+                if gj < 0:
+                    continue
+                KG[gi, gj] += Kg_gl[i_loc, j_loc]
+
+    return KG
+
+
 def solve_with_active_set(KSAT, LV, ND, DOF, RTYPE, NCT,
                           tol_contact=1e-6, max_iter=50, verbose=False):
     """
@@ -399,6 +509,17 @@ def epframe_oneway_analysis(input_file, output_file,
     
     # Calculate number of DOFs
     ND = int(np.sum(DOF))
+
+    # Displacement limit: 10% of the larger frame dimension
+    x_range = CORD[:, 0].max() - CORD[:, 0].min()
+    y_range = CORD[:, 1].max() - CORD[:, 1].min()
+    DLMT = 0.1 * max(x_range, y_range)
+
+    # Degree of static indeterminacy (before any hinges):
+    #   DI = (element force DOFs) − (free structural DOFs) = 3·NE − ND
+    # Each hinge reduces DI by 1. A mechanism forms when NCYCL ≥ DI + 1.
+    # (E3 = 3·NE is computed later; use 3*NE directly here)
+    DI = 3 * NE - ND
     
     # Initialize load vector
     LV = np.zeros(ND)
@@ -421,7 +542,11 @@ def epframe_oneway_analysis(input_file, output_file,
     fp.write(f"%          NUMBER OF NODES         {NCT:6d}\n")
     fp.write(f"%          NUMBER OF ELEMENTS      {NE:6d}\n")
     fp.write(f"%          MOD OF ELASTICITY  {E:12.1f}\n")
-    fp.write(f"%          YIELD STRESS       {Fy:12.1f}\n%\n")
+    fp.write(f"%          YIELD STRESS       {Fy:12.1f}\n")
+    fp.write(f"%          STATIC INDETERMINACY    {DI:6d}   "
+             f"(mechanism forms after {DI+1} hinges)\n")
+    fp.write(f"%          DISPLACEMENT LIMIT {DLMT:12.2f}   "
+             f"(0.10 × max frame dimension)\n%\n")
     
     # Input echo
     fp.write("%\n%     * DATA FOR NODES\n")
@@ -532,11 +657,12 @@ def epframe_oneway_analysis(input_file, output_file,
         row_start += int(np.sum(DOF[nd]))
     
     # Main analysis loop
-    print("\n=== ELASTIC-PLASTIC ANALYSIS WITH ONE-WAY REACTIONS ===\n")
+    print("\n=== ELASTIC-PLASTIC ANALYSIS WITH GEOMETRIC STIFFNESS AND ONE-WAY REACTIONS ===\n")
     
     while True:
         NCYCL += 1
         print(f"\n--- Load Increment {NCYCL} ---")
+        kg_norm = np.linalg.norm(KG) if 'KG' in dir() else 0.0
         
         # Build element stiffness matrix
         S_full = np.zeros((E3, E3))
@@ -551,8 +677,26 @@ def epframe_oneway_analysis(input_file, output_file,
         for i in range(NE):
             S_full[E2+i, E2+i] = SA[i]
         
-        # Form stiffness matrix
+        # Form elastic stiffness matrix
         KSAT = K @ S_full @ K.T
+
+        # Add geometric stiffness (depends on current cumulative axial forces CT)
+        KG = build_geometric_stiffness(CORD, ECON, DOF, CT, OLEN_elems, NE, NCT, ND)
+        KSAT += KG
+
+        ke_norm = np.linalg.norm(KSAT - KG)
+        kg_norm = np.linalg.norm(KG)
+        if ke_norm > 0:
+            print(f"  ||Kg|| / ||Ke|| = {kg_norm/ke_norm:.4f}"
+                  f"  ({'stiffening' if np.trace(KG) >= 0 else 'softening'}"
+                  f", max |CT| = {np.max(np.abs(CT)):.1f} kips)")
+
+        # Check for geometric instability (buckling):
+        # A negative minimum eigenvalue of KSAT means the structure has buckled.
+        # This is only worth checking when geometric stiffness is non-negligible.
+        # We defer this check until after solve_with_active_set returns None so
+        # that we can distinguish buckling (negative eigenvalue) from a plastic
+        # mechanism (zero eigenvalue due to hinge sequence).
         
         # Solve with active set
         disp, active = solve_with_active_set(
@@ -561,19 +705,24 @@ def epframe_oneway_analysis(input_file, output_file,
         )
         
         if disp is None:
-            msg = (f"     *** COLLAPSE MECHANISM DETECTED IN CYCLE {NCYCL}: "
-                   f"STIFFNESS MATRIX IS SINGULAR\n")
+            # Determine whether failure is geometric instability (buckling) or
+            # a plastic mechanism.  Buckling → KSAT has a negative eigenvalue.
+            # Mechanism → KSAT is singular (smallest eigenvalue ≈ 0).
+            # We check the minimum eigenvalue only when KG is non-trivial.
+            is_buckling = False
+            if kg_norm > 1.0e-10 * ke_norm:
+                eigs = np.linalg.eigvalsh(KSAT)
+                if eigs[0] < -1.0e-6 * abs(eigs[-1]):
+                    is_buckling = True
+
+            if is_buckling:
+                msg = (f"     *** GEOMETRIC INSTABILITY (BUCKLING) IN CYCLE {NCYCL}: "
+                       f"min eigenvalue = {eigs[0]:.3e}\n")
+            else:
+                msg = (f"     *** COLLAPSE MECHANISM DETECTED IN CYCLE {NCYCL}: "
+                       f"STIFFNESS MATRIX IS SINGULAR\n")
             fp.write(f"%\n%{msg}%\n")
             print(f"\n{msg.strip()}")
-            break
-        
-        # Check deformations
-        DLMT = 1000.0
-        max_disp = np.max(np.abs(disp))
-        
-        if max_disp > DLMT:
-            fp.write(f"%\n%     *** DEFORMATIONS LARGER THAN {DLMT:.1f} IN CYCLE NO {NCYCL:4d}\n%\n")
-            print(f"\nDeformations exceed limit ({max_disp:.2e} > {DLMT:.1f})")
             break
         
         # Calculate forces
@@ -679,6 +828,23 @@ def epframe_oneway_analysis(input_file, output_file,
         CLF += SALF
         CM += SATX[:E2]
         CT += SATX[E2:]
+
+        # Check cumulative displacements against frame-size limit
+        max_cd = np.max(np.abs(CD))
+        if max_cd > DLMT:
+            msg = (f"     *** CUMULATIVE DISPLACEMENT {max_cd:.2f} EXCEEDS LIMIT "
+                   f"{DLMT:.2f} (0.10 × max frame dimension) IN CYCLE {NCYCL}\n")
+            fp.write(f"%\n%{msg}%\n")
+            print(f"\n{msg.strip()}")
+            break
+
+        # Indeterminacy warning: once hinges exceed DI the structure is
+        # kinematically a mechanism — geometric stiffness may mask this.
+        if NCYCL > DI:
+            msg = (f"     *** WARNING: HINGE COUNT ({NCYCL}) EXCEEDS DEGREE OF "
+                   f"STATIC INDETERMINACY ({DI}) — KINEMATIC MECHANISM LIKELY\n")
+            fp.write(f"%{msg}")
+            print(f"  {msg.strip()}")
         
         # Hinge location
         EL = PHN // 2

@@ -1297,3 +1297,110 @@ The code has come a long way — from a straightforward Python translation of a 
     P-M interaction via the parabolic AISC approximation with an analytical quadratic solve
     A clean visualization pipeline with physically correct moment, shear, and axial diagrams
 
+---
+
+OK!   Since you asked, geometric nonlinearity would be a fantastic next step.   Just like plastic hinging and moment-axial interaction the effects of geometric stiffness can significantly affect collapse loads.     Since we are at it, why not push forward ?    
+ I have moved the filename from epframe_oneway.py to epframe.py .   I am uploading a (very slightly) edited version of epframe.py .  
+I have worked on geometric stiffness effects in frames previously.   I am attaching a .pdf of my notes on this topic so you can see where I am coming from.   These notes also include a bit on shear deformation.    Let's leave shear deformation out of epframe.py for now. 
+The elastic and geometric stiffness matrices for Bernoulli-Euler Beam Elements are in section 3.6 on page 17.  
+   Please add geometric stiffness effects to epframe.py!
+
+---
+
+Excellent choice — geometric stiffness is the natural companion to P-M interaction, and with both in place the code will capture the full picture of frame collapse. Let me read the current code before planning anything:Good — I now have the full picture. Let me think through exactly what changes before writing a line.
+
+**What the geometric stiffness requires mechanically:**
+
+From eq (75) in your notes, the element geometric stiffness in local coordinates is:
+
+K̄_g = (N/L) × [6×6 matrix depending only on L]
+
+where N = CT[el] is the current cumulative axial force. This is assembled into the global stiffness matrix at each load increment using the same coordinate transformation T used for the elastic stiffness. The critical point: **N is the cumulative axial force at the start of each increment** — it is updated after each hinge forms, so the geometric stiffness evolves throughout the progressive collapse.
+
+**Where it fits in the existing code:**
+
+The existing code forms `KSAT = K @ S_full @ K.T`. Geometric stiffness adds directly to `KSAT` via a separate assembly function — no changes to the compatibility matrix K, the SF/SA coefficients, or the hinge detection algorithm. The P-M quadratic solve is unaffected.
+
+**Additional termination condition:**
+
+Geometric instability (buckling) can occur when `KSAT` becomes non-positive-definite before a plastic hinge forms. This is already caught by the `LinAlgError` / singular matrix path, but we should also detect it cleanly via the sign of the smallest eigenvalue of KSAT.
+
+Now implementing:Now add geometric stiffness to the main loop, and add a geometric instability check:Also echo the geometric stiffness contribution in the output so students can see it's active:Now test with the existing beam example (axial forces are zero, so KG=0 and results should be identical to before):The result is numerically correct (λ = 7.790 unchanged ✓) but the "GEOMETRIC INSTABILITY" message is triggering on what is actually a plastic mechanism — because Cholesky also fails on singular matrices. I need to distinguish the two cases: buckling (negative eigenvalue) vs mechanism (zero eigenvalue). Let me fix the termination logic:Now update the `disp is None` handler to distinguish buckling from mechanism:Now test both cases — the beam (zero axial, should still report mechanism) and verify the ratio output is clean:Mechanism correctly identified. Now write a simple test case with significant axial compression to verify the geometric stiffness actually changes the load factor:The geometric stiffness is working — after hinge 1 (increment 1, KG/Ke = 0 as no axial forces yet), increment 2 shows KG/Ke = 0.036 (3.6% softening effect from ~686 kips compression), growing to 13.9% by increment 4. The compression yield termination also fires correctly at Py = 730 kips. Let me copy to outputs:Here is a complete summary of what was added:
+
+---
+
+**New function `build_geometric_stiffness`** — assembles the global geometric stiffness matrix KG from the current cumulative axial forces CT. For each element it forms the 6×6 local matrix (eq 75 from your notes):
+
+K̄_g = (N/L) × G̃
+
+where G̃ contains the Hermite-integrated products of shape function slopes (ψ'_y terms). The local matrix is transformed to global coordinates via the standard beam rotation matrix T, and contributions are scattered into the ND×ND global DOF space with constrained DOFs omitted.
+
+**Main loop — geometric stiffness addition:** After forming the elastic `KSAT = K @ S_full @ K.T`, the geometric contribution is added: `KSAT += KG`. Because CT is the *cumulative* axial force at the start of each increment, KG evolves naturally throughout the progressive collapse — zero at the first increment (no axial force yet), growing as load accumulates.
+
+**Buckling vs mechanism detection:** When `solve_with_active_set` returns `None`, the code now distinguishes the two failure modes. If KG is non-trivial and the minimum eigenvalue of KSAT is clearly negative (< −10⁻⁶ × max eigenvalue), it reports `GEOMETRIC INSTABILITY (BUCKLING)`. Otherwise it reports `COLLAPSE MECHANISM` as before. The minimum eigenvalue is computed only when needed — `np.linalg.eigvalsh` on a small symmetric matrix.
+
+**Per-increment diagnostic output:** Each increment prints `||Kg||/||Ke||` and whether the geometric effect is stiffening (tension) or softening (compression), helping students see how significant the geometric contribution is at each stage.
+
+---
+
+Here are the input and output files for a gable frame model.   After the 6th load step,  the solution seems to move into an unusual configuration.    Element axial forces change from compression to tension - thereby increasing the geometric stiffness and increasing stability.   At the same time, the system has developed 7 (and more) plastic hinges, which clearly signals that a mechanism has formed.   
+Let's reduce the displacement values that would correspond to collapse ... The largest allowable displacement should be the one tenth of the maximum of the (max(x-coordinate) - min(x-coordinate) - (max( y coordinate)-min(y coordinate)) .  Also, is thre a way to check on the level of static indeterminacy of the model, accounting for hinges?   The concept of static indeterminacy for frames can be subtle and ultimately comes down to the singularity of the stiffness matrix.   
+Here  are the files for the gable frame model.
+
+---
+
+Let me read both files carefully before planning anything.Now let me see the truncated middle section (hinges 4–9):The picture is clear. Several issues at once:
+
+**The displacement check is on the wrong variable.** Currently it checks the unscaled rate vector `disp` (displacement per unit load factor) against `DLMT`, not the cumulative `CD`. Since SALF = 57.8 between hinges 7 and 8, a rate of ~1.3 in/λ passes the check but the cumulative displacement after scaling is ~76 inches. The check must be moved to **after** the CD update.
+
+**The indeterminacy question:** For this code's formulation, the degree of static indeterminacy is simply `DI = E3 − ND = 3·NE − ND`. Each hinge removes one moment release from the element flexibility, reducing the effective rank by 1. A mechanism forms when `NCYCL ≥ DI + 1`. For this 7-element frame: `DI = 21 − 18 = 3`, so a mechanism should form after 4 hinges — but geometric stiffness keeps the matrix non-singular spuriously. Tracking `NCYCL > DI` and warning when this threshold is crossed gives the student exactly the right diagnostic.
+
+Let me implement both fixes:Now I have everything I need. Three targeted edits:
+
+1. Compute DLMT from geometry before the loop, print DI in the header.
+2. Remove the old DLMT check (on unscaled `disp`), add the correct check on `CD` after the cumulative update.
+3. Add the indeterminacy warning after each hinge forms.Now test with the gable frame:The header write uses DI before ND has been computed (ND is computed just after the load processing, before the element length loop). Let me move the DI/DLMT computation earlier:The analysis now terminates correctly at cycle 8 — the displacement check catches the 198-inch cumulative displacement against the 52.8-inch limit. The indeterminacy warning fires correctly from hinge 4 onward, telling the student exactly what's happening mechanically. Let me verify the output header:Also confirm the beam example still works correctly (DI should be 3 there too, and only 1 hinge forms before collapse):The beam shows DI = 2 (3 elements × 3 − 7 free DOFs = 9 − 7 = 2, correct for a propped cantilever with one unidirectional support). DLMT = 20 inches = 0.1 × 200 inch span. Copy to outputs:The two issues had related but distinct root causes.
+
+**The displacement check was on the wrong variable.** `disp` at the check point is the *unscaled* displacement rate — the solution to `KSAT·d = LV` with LV being the unit load pattern. For the gable frame between hinges 7 and 8, the load factor increment SALF ≈ 57.8, so a rate of ~1.3 in/λ at node 3 never tripped the 1000-inch limit. The cumulative displacement `CD` after the update jumped to 198 inches. The fix moves the check to after `CD += disp` (where `disp` has already been scaled by SALF), and sets `DLMT = 0.1 × max(x_range, y_range)` — 52.8 inches for this frame.
+
+**The indeterminacy.** For this formulation: `DI = 3·NE − ND`. Every hinge eliminates one moment stiffness entry from `S_full`, reducing the rank of the flexibility space by 1. When `NCYCL > DI`, the elastic stiffness alone can no longer provide a unique solution — geometric stiffness from axial forces is papering over what is already a mechanism. The warning fires from hinge 4 onward in the gable frame, correctly telling the student that only the geometric stiffness term is maintaining a non-singular system. For the gable frame: DI = 3, so the true collapse load is best taken as λ = 22.923 (hinge 4), which is the point where the warning first appears. The values reported through hinges 5–7 are products of geometric stiffening masking the mechanism.
+
+---
+
+The viz code reads the output file and could be disrupted by the two new header lines. Let me check and fix that, then also ensure the viz handles the new termination message gracefully.The viz handles the new header lines fine — they're simply skipped by the parser. But there are two natural enhancements to make while we're here:
+
+1. Parse `DI` and `DLMT` from the new header so plots can use them
+2. Add a **load-displacement curve** — λ vs. max node displacement with hinge events marked — which is the most pedagogically useful progressive collapse plotNow add the load-displacement curve function and call it from `visualize_frame`. Find the right insertion point:Now insert the load-displacement curve function before `visualize_frame`, and add its call:Now add the call to `plot_load_displacement` inside `visualize_frame` after the summary plot:Test both cases:The DI parser is matching the wrong token. Let me check the exact line format:The format after stripping `%` and splitting is `['STATIC', 'INDETERMINACY', '3', '(mechanism', 'forms', 'after', '4', 'hinges)']` — so the value is at index 2 (third token), not `[-4]`:Both cases clean. Copy to outputs:Here is a summary of all changes made in this session:
+
+---
+
+**`epframe.py`**
+
+`DI` and `DLMT` are now computed immediately after `ND` — so they are available for the output header. `DI = 3·NE − ND` is the degree of static indeterminacy: the number of redundant member-force components in the original elastic structure, which equals the number of plastic hinges needed to convert the structure into a mechanism. `DLMT = 0.1 × max(x_range, y_range)` replaces the old hardcoded 1000-inch limit with one that scales with the actual frame geometry.
+
+Both values are echoed in the output header with explanatory text. The old displacement check on the unscaled rate vector `disp` is removed. The new check is applied to `CD` (cumulative displacements) after the update, where it correctly reflects the actual structural state.
+
+After each hinge forms, if `NCYCL > DI` a warning is printed and written to the output file: the hinge count has exceeded the degree of static indeterminacy, meaning the elastic stiffness alone can no longer maintain a non-singular system — only the geometric stiffness term is keeping the solution alive. For the gable frame this fires at hinge 4 (DI = 3), which is the correct collapse load: λ = 22.923.
+
+---
+
+**`epframe_viz.py`**
+
+`read_output_file` — now parses `YIELD STRESS`, `STATIC INDETERMINACY`, and `DISPLACEMENT LIMIT` from the header when present (with fallback for old output files that don't have these lines). Both `DI` and `DLMT` are threaded through to `visualize_frame` in the return tuple.
+
+New function `plot_load_displacement` — plots λ on the vertical axis against maximum nodal resultant displacement `||Δ||` on the horizontal axis, with each hinge event annotated. Post-mechanism hinges (those formed after `NCYCL > DI`) are marked in orange rather than red. A dashed vertical line marks `DLMT` and a dotted horizontal line marks the load factor at which DI is exhausted. This plot is saved as `{base}-load_displacement.pdf`.
+
+---
+
+Absolutly incredible!!    I love how the effect of geometric stiffness can "paper over" the occurence of a failure mechanism.    And the new displacement limit checks prevent the solution from proceeding into deformation levels that violate core assumptions of relatively small deformation.    It is also very intresting to see how the mechanisms that form after the third hinge reduce the displacements until the very large displacement of hinge 7 is formed.   
+One small request for the viz function.   May I ask if the legend text (currently in the upper left corner) be moved to the lower right corner so as to not over-write the curve?    Also, please  plot only  the force-displacment up to the largest displacement in the simulation ... do not show the vertical dashed line at 0.1 * the frame geometry dimension, so that the pre-collapse behavior is resolved more clearly in the plot.
+
+---
+
+Simple targeted edits — move the legend, remove the DLMT vertical line, and set the x-axis limit to the maximum displacement in the data:Three small changes in `plot_load_displacement`:
+
+- `loc='upper left'` → `loc='lower right'`
+- The `ax.axvline` DLMT block is replaced with a comment explaining the omission — the limit is still reported in the output file header, just not cluttering the plot
+- `ax.set_xlim(left=0)` → `ax.set_xlim(left=0, right=max(md_arr) * 1.05)` — the x-axis now ends at 5% past the last data point, so the early-stage hinge separations at small displacements are resolved clearly rather than being compressed into a narrow strip at the left edge
+
+---

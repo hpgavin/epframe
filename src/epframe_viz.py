@@ -31,6 +31,9 @@ def read_output_file(filename):
     NCT = 0
     NE = 0
     E_mod = 0.0
+    Fy    = 0.0
+    DI    = None  # degree of static indeterminacy (None if old output format)
+    DLMT  = None  # displacement limit (None if old output format)
     CORD = None
     ECON = None
     PM = None
@@ -58,9 +61,17 @@ def read_output_file(filename):
                 len(line.replace('%', '').strip()) > 0):
             title = line.replace('%', '').strip()
 
-        if 'NUMBER OF NODES'    in line: NCT   = int(line.split()[-1])
-        if 'NUMBER OF ELEMENTS' in line: NE    = int(line.split()[-1])
-        if 'MOD OF ELASTICITY'  in line: E_mod = float(line.split()[-1])
+        if 'NUMBER OF NODES'      in line: NCT   = int(line.split()[-1])
+        if 'NUMBER OF ELEMENTS'   in line: NE    = int(line.split()[-1])
+        if 'MOD OF ELASTICITY'    in line: E_mod = float(line.split()[-1])
+        if 'YIELD STRESS'         in line: Fy    = float(line.split()[-1])
+        # New header lines: "STATIC INDETERMINACY   3  (mechanism..." → value is 3rd token
+        if 'STATIC INDETERMINACY' in line:
+            try: DI = int(line.replace('%','').split()[2])
+            except (ValueError, IndexError): pass
+        if 'DISPLACEMENT LIMIT'   in line:
+            try: DLMT = float(line.replace('%','').split()[2])
+            except (ValueError, IndexError): pass
 
         if 'DATA FOR NODES' in line:
             i += 2  # skip section header and column-header line
@@ -237,7 +248,7 @@ def read_output_file(filename):
 
     return (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM, SMA,
             hinges, disp_history, moment_history, force_history,
-            load_factors, liftoff_history, title)
+            load_factors, liftoff_history, title, DI, DLMT)
 
 def compute_element_curves(CORD, ECON, SMA, E_mod, disp, moments, NE,
                            frame_size, scale=1.0):
@@ -797,6 +808,75 @@ def plot_shear_diagram(CORD, ECON, NCT, NE, moments, load_factor):
 
     return fig, ax
 
+def plot_load_displacement(disp_history, load_factors, hinges, CORD, NCT, DI, DLMT, title):
+    """
+    Plot load factor λ vs. maximum cumulative nodal displacement.
+
+    Each hinge formation is marked.  If DI is available a vertical dashed line
+    marks the hinge count at which the degree of static indeterminacy is
+    exhausted (the theoretical mechanism threshold).  If DLMT is available a
+    horizontal dashed line marks the displacement limit.
+    """
+    if len(disp_history) == 0:
+        return None, None
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Maximum resultant nodal displacement at each stage
+    max_disp_vals = []
+    for disp in disp_history:
+        # Resultant translation magnitude at each node
+        results = np.sqrt(disp[:, 0]**2 + disp[:, 1]**2)
+        max_disp_vals.append(np.max(results))
+
+    lf_arr  = np.array(load_factors)
+    md_arr  = np.array(max_disp_vals)
+
+    # Main curve — add origin
+    lf_plot  = np.concatenate([[0.0], lf_arr])
+    md_plot  = np.concatenate([[0.0], md_arr])
+    ax.plot(md_plot, lf_plot, 'b-o', linewidth=2, markersize=6,
+            label='Load-displacement path')
+
+    # Mark each hinge formation
+    mechanism_marked = False
+    for idx, (h_num, el_num, nd_num) in enumerate(hinges):
+        lf  = lf_arr[idx]
+        md  = md_arr[idx]
+        is_mechanism = (DI is not None) and (h_num > DI)
+        color = 'orange' if is_mechanism else 'red'
+        label = None
+        if not is_mechanism and idx == 0:
+            label = 'Hinge formation'
+        if is_mechanism and not mechanism_marked:
+            label = f'Post-mechanism hinge (NCYCL > DI={DI})'
+            mechanism_marked = True
+        ax.plot(md, lf, 's', color=color, markersize=10, zorder=5, label=label)
+        ax.annotate(f'H{h_num}', xy=(md, lf),
+                    xytext=(md + max(md_arr)*0.02, lf),
+                    fontsize=8, color=color, va='center')
+
+    # Displacement limit line — omitted so the pre-collapse detail is clear
+    # (DLMT is still reported in the output file header)
+
+    # DI threshold: horizontal dotted line at λ when DI is exhausted
+    if DI is not None and len(hinges) > DI:
+        lf_di = lf_arr[DI - 1]   # λ at the DI-th hinge (0-indexed: DI-1)
+        ax.axhline(y=lf_di, color='purple', linestyle=':', linewidth=1.5,
+                   label=rf'$\lambda$ at DI exhaustion ({DI} hinges) = {lf_di:.2f}')
+
+    ax.set_xlabel(r'Max nodal displacement $\|\Delta\|$ (in)', fontsize=12)
+    ax.set_ylabel(r'Load factor $\lambda$', fontsize=12)
+    ax.set_title(f'{title}\nLoad-Displacement Curve — Progressive Collapse',
+                 fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9, loc='lower right')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(left=0, right=max(md_arr) * 1.05)
+    ax.set_ylim(bottom=0)
+
+    return fig, ax
+
+
 def visualize_frame(output_file):
     """Create all visualizations for frame analysis from output file only"""
 
@@ -812,7 +892,7 @@ def visualize_frame(output_file):
     # Read all data from output file
     (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM, SMA,
      hinges, disp_history, moment_history, force_history,
-     load_factors, liftoff_history, title) = read_output_file(output_file)
+     load_factors, liftoff_history, title, DI, DLMT) = read_output_file(output_file)
 
     plot_title = title if title else base
     print(f"{base}: {NCT} nodes, {NE} elements")
@@ -933,6 +1013,17 @@ def visualize_frame(output_file):
         plt.savefig(fname, dpi=150, bbox_inches='tight')
         print(f"Saved: {fname}")
         plt.close(fig)
+
+    # 7. Load-displacement curve
+    if len(hinges) > 0:
+        fig7, ax7 = plot_load_displacement(
+            disp_history, load_factors, hinges, CORD, NCT, DI, DLMT, plot_title)
+        if fig7 is not None:
+            plt.tight_layout()
+            fname = f'{path}{base}-load_displacement.pdf'
+            plt.savefig(fname, dpi=150, bbox_inches='tight')
+            print(f"Saved: {fname}")
+            plt.close(fig7)
 
     print("\nVisualization complete!")
 
