@@ -7,6 +7,8 @@
 %          NUMBER OF ELEMENTS           3
 %          MOD OF ELASTICITY       29000.0
 %          YIELD STRESS               24.0
+%          STATIC INDETERMINACY         1   (mechanism forms after 2 hinges)
+%          DISPLACEMENT LIMIT        20.00   (0.10 × max frame dimension)
 %
 %
 %     * DATA FOR NODES
@@ -59,6 +61,7 @@
 %                  1        -0.00       -21.70      1384.89    ACTIVE
 %                  2        -0.00         0.00        -0.00    LIFT-OFF:Y
 %                  4        -0.00       -37.39         0.00    ACTIVE
+%     *** WARNING: HINGE COUNT (2) EXCEEDS DEGREE OF STATIC INDETERMINACY (1) — KINEMATIC MECHANISM LIKELY
 %
 %
 %

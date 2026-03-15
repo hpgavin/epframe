@@ -924,16 +924,16 @@ Great!
 On epframe_viz.py file naming:
 
 1. Yes. please name the .pdf plot files as --- `beam_oneway_example-geometry.pdf` (basename only, no path, no extension), and placed in `./plots/` as currently.
-1. Yes.  please specify the two-digit zeor-padded hinge numbers in the moment, axial and shear plots.
+3. Yes.  please specify the two-digit zeor-padded hinge numbers in the moment, axial and shear plots.
 
 On the support icons:
-1.  Yes. please redefine the node diamter as a fixed fraction of the frame geometry (e.g., `margin × 0.05`) and use this as a reference for the dimensions of the reaction icons. 
-2. Yes. you read this correctly.  The circle is centered to the left of the node.    The vertical red line goes through the center of the red reaction icon circle.  
-3. Yes. Bidirection reaction icons should have two arrowheads.  
-4. Good catch!!  All reaction icon dimension should have a diamter / side length that is _two_ times the diameter of the node circle icon.  
-5.  " X Y Z " arrow placement - arrow lines should be centered below the sqaure, with the top of the vertical line touching the bottom edge of the square.   
-6. Great question!   In the deformed shape plots, please include on the the reaction direction arrow icons, with no base icon.   Do not indicate  reaction icons in the moment, axial, and shear plots.
-7. Do not indicate "ghost icons" in the deformed shape when there is lift off.   I think the reaction force direction icons will indicate the occurrence of a lift off condition.   
+4.  Yes. please redefine the node diamter as a fixed fraction of the frame geometry (e.g., `margin × 0.05`) and use this as a reference for the dimensions of the reaction icons. 
+5. Yes. you read this correctly.  The circle is centered to the left of the node.    The vertical red line goes through the center of the red reaction icon circle.  
+6. Yes. Bidirection reaction icons should have two arrowheads.  
+7. Good catch!!  All reaction icon dimension should have a diamter / side length that is _two_ times the diameter of the node circle icon.  
+8.  " X Y Z " arrow placement - arrow lines should be centered below the sqaure, with the top of the vertical line touching the bottom edge of the square.   
+9. Great question!   In the deformed shape plots, please include on the the reaction direction arrow icons, with no base icon.   Do not indicate  reaction icons in the moment, axial, and shear plots.
+10. Do not indicate "ghost icons" in the deformed shape when there is lift off.   I think the reaction force direction icons will indicate the occurrence of a lift off condition.   
 
 (revsison 3) There is one more major revision I would like to request.    In a previous prompt I asked for deformed shapes that satisfy the moment-curvature relationship.   The revisions for this were quite complex.    I think in the current version of epframe_viz.py plots the deformed shape as a straight line connecting the two points, even though the calculation of the bent shape is carried out.   Please revise epframe_viz.py to plot the deformed shape at increments of "dx" along each element starting at the first node of the element and ending at (and including) the last node of the element, with "dx" being 0.01 times the overall dimension of the frame ... the maximum of the horizontal span of the frame or the vertical height of the frame, whichever is larger.   
 
@@ -975,13 +975,13 @@ On revision 3 ...
 1. The `dx = 0.01 × max(x_span, y_span)` step is such that if the structure were 100 inches wide and 200 inches tall, dx would be 2 inches.   
 2. Yes. I am running the lastest version of epframe_viz.   I think I am seeing straight lines becaue the curved frame element displacements are being evaluated only at the ends of each element ... a look at the source code would confirm this. 
 On the reaction icons:
-1. Let's always show the arrow in the same red, so that the displacement of the node away from the support position is itself the visual indicator. 
-2. Great question.   For `X Y Z` supports:  let's put the vertical Y direction arrow below the square so that the top of the line touches the bottom edge of the square, and let's put the horizontal Y direction arrow to the left of the square sot that the right end of the line touches the left edge of the square.  
-3. Correct.  For the deformed shape plots, you want only the arrow direction indicators with no base icon.   Please place the arrows in the same locations as they appear in the "geometry.pdf" figure.  
+3. Let's always show the arrow in the same red, so that the displacement of the node away from the support position is itself the visual indicator. 
+4. Great question.   For `X Y Z` supports:  let's put the vertical Y direction arrow below the square so that the top of the line touches the bottom edge of the square, and let's put the horizontal Y direction arrow to the left of the square sot that the right end of the line touches the left edge of the square.  
+5. Correct.  For the deformed shape plots, you want only the arrow direction indicators with no base icon.   Please place the arrows in the same locations as they appear in the "geometry.pdf" figure.  
 On the title in epframe.py: 
-1. Yes. The title replaces the frame number (currently `0` on line 1 of the input file) entirely.  We will remove the frame number entirely.  
+6. Yes. The title replaces the frame number (currently `0` on line 1 of the input file) entirely.  We will remove the frame number entirely.  
 or the CSV:
-1. Let's place the title as a quoted string in the (1,1) cell of the .csv so that it appears above the header row.
+7. Let's place the title as a quoted string in the (1,1) cell of the .csv so that it appears above the header row.
 
 ---
 
@@ -1065,9 +1065,9 @@ Fantastic progress!   The codes run just fine.   There seems to be an error in t
 3. Maintaining sign conventions, "the value of the shear is the negative of the  slope of the moment"   because of the error in item #2, epframe_viz does not respect this  consistently.   In some cases it does, on others it does not.    Correcting the error in item #2 above, "the value of the shear will be correctly the negative of the slope of the moment."  
 4. There might be an error in the application of the moment curvature relation ... curvature phi(x) equals the moment divided by the flexural stiffness ... M(x) / (EI)  -- let's see if correcting #2 above fixes the issue.   
 For the figures, some slight edits to request. 
-1. In plots of axial force, shear force, and bending moment, please do not show the element numbers and please do not show the node numbers.   
-2. Please plot the moment on the compression side of the elements.  
-3. In the geometry plot, please (a) make the dimension of the reaction icons larger ... change from 2 times to 3 times the node icon diameter (b) center the node reaction icon at the node location.  (c) Make the length of the lines passing through the node icons 4 times the diamter of the node icon.  (d) Center the lines passing through the node icon to be on the node location.  (e) Plot the node icons last and the node reaction icons next-to-last, (as is currently done) so that the node icon lies over the node reaction icon, and that the node reaction icon lies over everything else.  (f) Make the reaction force direction lines longer. ... 3 times the node icon diameter, (g) Make the arrow heads point away from each other   (h) in the legend of the moment diagram, remove the line indicating the value of the plastic moment.   
+5. In plots of axial force, shear force, and bending moment, please do not show the element numbers and please do not show the node numbers.   
+6. Please plot the moment on the compression side of the elements.  
+7. In the geometry plot, please (a) make the dimension of the reaction icons larger ... change from 2 times to 3 times the node icon diameter (b) center the node reaction icon at the node location.  (c) Make the length of the lines passing through the node icons 4 times the diamter of the node icon.  (d) Center the lines passing through the node icon to be on the node location.  (e) Plot the node icons last and the node reaction icons next-to-last, (as is currently done) so that the node icon lies over the node reaction icon, and that the node reaction icon lies over everything else.  (f) Make the reaction force direction lines longer. ... 3 times the node icon diameter, (g) Make the arrow heads point away from each other   (h) in the legend of the moment diagram, remove the line indicating the value of the plastic moment.   
 
 Please ask clarifying questions before editing code.
 
@@ -1402,5 +1402,23 @@ Simple targeted edits — move the legend, remove the DLMT vertical line, and se
 - `loc='upper left'` → `loc='lower right'`
 - The `ax.axvline` DLMT block is replaced with a comment explaining the omission — the limit is still reported in the output file header, just not cluttering the plot
 - `ax.set_xlim(left=0)` → `ax.set_xlim(left=0, right=max(md_arr) * 1.05)` — the x-axis now ends at 5% past the last data point, so the early-stage hinge separations at small displacements are resolved clearly rather than being compressed into a narrow strip at the left edge
+
+---
+
+**What epframe.py now does:**
+- Elastic-plastic incremental analysis with unidirectional reaction supports via active-set iteration
+- P-M interaction (parabolic AISC approximation) with quadratic hinge detection
+- Geometric stiffness (Bernoulli-Euler, assembled per increment from current axial forces)
+- Distinction between plastic mechanism, buckling, and compression yield at termination
+- Degree-of-static-indeterminacy tracking with mechanism warnings
+- Physically scaled displacement limit
+
+**What epframe_viz.py now does:**
+- Correct sign conventions throughout (CCW-positive output)
+- Curved deformed shapes from slope-deflection flexibility, with hinge rotations emerging naturally
+- Custom reaction support icons in data coordinates
+- Load-displacement curve with hinge annotations and DI exhaustion marker
+
+The progression from a 1986 Fortran code to this — through unidirectional reactions, P-M interaction, and geometric nonlinearity — is a complete and rigorous treatment of plastic frame collapse. 
 
 ---
