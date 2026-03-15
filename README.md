@@ -13,6 +13,9 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 
 - **Incremental Load Analysis**: Progressive loading until collapse mechanism forms
 - **Plastic Hinge Tracking**: Sequential formation of plastic hinges with load factors
+- **Moment-Axial Interaction**: Axial loads reduce ultimate moments
+- **Geometric Nonlinearity**: Tension forces increase stability, compression forces decreases stability
+- **Unidirectional Reactions**: Reaction forces can be specified to act in only one direction
 - **Automatic Stiffness Modification**: Member stiffnesses adjust as hinges form
 - **Reaction Force Calculations**: Support reactions computed at each load step
 - **Visualization Suite**: Automatic generation of deformed shapes, moment diagrams, shear diagrams, and axial force diagrams
@@ -26,7 +29,10 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 | ----------------------- | ------------------------------------------- |
 | `epframe.py`            | Main analysis program                       |
 | `epframe_viz.py`        | Visualization and plotting tools            |
-| `epframe_example_0.dat` | Example input file (7-element portal frame) |
+| `square_tube.py`        | Section properties of square tube cross sections |
+| `beam_4_example.dat`    | Example input file (4-node beam)            |
+| `beam_7_example.dat`    | Example input file (7-node beam)            |
+| `frame_7_example.dat`   | Example input file (7-node gable frame)     |
 
 ## Installation
 
@@ -59,27 +65,27 @@ python epframe_viz.py output_file
 
 **Generated Plots in sub-directory ./plots/ :**
 
-- `frame_N_geometry.pdf` - Original frame layout with supports
-- `frame_N_deformed_hinge_X.pdf` - Deformed shape after each hinge
-- `frame_N_moments_hinge_X.pdf` - Bending moment diagrams
-- `frame_N_shear_X.pdf` - Shear force diagram (final state only)
-- `frame_N_axial_X.pdf` - Axial force diagram (final state only)
-- `frame_N_summary.pdf` - 4-panel progressive collapse summary
+- `output_file-geometry.pdf` - Original frame layout with supports
+- `output_file-deformed_hinge_X.pdf` - Deformed shape after each hinge
+- `output_file-moments_hinge_X.pdf` - Bending moment diagrams
+- `output_file-shear_hinge_X.pdf` - Shear force diagram (final state only)
+- `output_file-axial_hinge_X.pdf` - Axial force diagram (final state only)
+- `output_file-load_displacement.pdf` - load factor vs max displacement 
+- `output_file-summary.pdf` - 4-panel progressive collapse summary
 
 ## Input File Format
 
 ```
 # EPFRAME Example Input File
-# 7-element portal frame with lateral and gravity loads
 # Units: inches, kips, ksi
 
-0                              # Frame number
+A 7-element gable frame with lateral and gravity loads
 
-# NCT  NE   E (ksi)
-   8    7   29000              # 8 nodes, 7 elements, steel
+# NCT  NE   E (ksi)  Fy (ksi)
+   8    7   29000    24        # 8 nodes, 7 elements, steel
 
 # Node data: 
-# Reactions in all three coordinates at nodes 1 and 8 
+# Reactions in all three coordinates at nodes 1 and 8
 # Node   X      Y  RX  RY  RZ
  1       0      0   1   1   1  # Left support (fixed)
  2       0    168   0   0   0  # Left column top
@@ -92,14 +98,14 @@ python epframe_viz.py output_file
 
 # Element data:
 # All elements: W14x68 section
-# Element N1  N2  I(in^4)  A(in^2)  Mp(in-kips)
- 1         1   2   954      19.7    4680   # Left column
- 2         2   3   954      19.7    4680   # Roof elements
- 3         3   4   954      19.7    4680
- 4         4   5   954      19.7    4680   # Center span
- 5         5   6   954      19.7    4680
- 6         6   7   954      19.7    4680
- 7         7   8   954      19.7    4680   # Right column
+# Element N1  N2  I(in^4)  A(in^2)  Z (in^3)
+ 1         1   2   954      19.7    115.0   # Left column
+ 2         2   3   954      19.7    115.0   # Roof elements
+ 3         3   4   954      19.7    115.0
+ 4         4   5   954      19.7    115.0   # Center span
+ 5         5   6   954      19.7    115.0
+ 6         6   7   954      19.7    115.0
+ 7         7   8   954      19.7    115.0   # Right column
 
 # Number of loaded nodes
 5
@@ -122,37 +128,40 @@ python epframe_viz.py output_file
 
 ```
 %
-%     ELASTIC PLASTIC ANALYSIS OF FRAME NO 0
-%     ---------------------------------------
+%     A 7-element gable frame with lateral and gravity loads
+%     -------------------------------------------------------
 %
 %     * GENERAL DATA
 %          NUMBER OF NODES              8
 %          NUMBER OF ELEMENTS           7
 %          MOD OF ELASTICITY       29000.0
+%          YIELD STRESS               24.0
+%          STATIC INDETERMINACY         3   (mechanism forms after 4 hinges)
+%          DISPLACEMENT LIMIT        52.80   (0.10 × max frame dimension)
 %
 %
 %     * DATA FOR NODES
-%           NODE   X-COORD   Y-COORD    RX    RY    RZ
+%           NODE   X-COORD   Y-COORD    RX-TYPE  RY-TYPE  RZ-TYPE
 %
-%             1        0.00      0.00     1     1     1
-%             2        0.00    168.00     0     0     0
-%             3      120.00    252.00     0     0     0
-%             4      216.00    252.00     0     0     0
-%             5      312.00    252.00     0     0     0
-%             6      408.00    252.00     0     0     0
-%             7      528.00    168.00     0     0     0
-%             8      528.00      0.00     1     1     1
+%             1        0.00      0.00        BI       BI       BI
+%             2        0.00    168.00      FREE     FREE     FREE
+%             3      120.00    252.00      FREE     FREE     FREE
+%             4      216.00    252.00      FREE     FREE     FREE
+%             5      312.00    252.00      FREE     FREE     FREE
+%             6      408.00    252.00      FREE     FREE     FREE
+%             7      528.00    168.00      FREE     FREE     FREE
+%             8      528.00      0.00        BI       BI       BI
 %
 %     * DATA FOR ELEMENTS
-%         ELEMENT    N1      N2       IXX      AREA        MP
+%         ELEMENT    N1      N2       IXX      AREA         Z        MP        PY
 %
-%             1        1       2    954.00     19.70   4680.00
-%             2        2       3    954.00     19.70   4680.00
-%             3        3       4    954.00     19.70   4680.00
-%             4        4       5    954.00     19.70   4680.00
-%             5        5       6    954.00     19.70   4680.00
-%             6        6       7    954.00     19.70   4680.00
-%             7        7       8    954.00     19.70   4680.00
+%             1        1       2    954.00     19.70    115.00   2760.00    472.80
+%             2        2       3    954.00     19.70    115.00   2760.00    472.80
+%             3        3       4    954.00     19.70    115.00   2760.00    472.80
+%             4        4       5    954.00     19.70    115.00   2760.00    472.80
+%             5        5       6    954.00     19.70    115.00   2760.00    472.80
+%             6        6       7    954.00     19.70    115.00   2760.00    472.80
+%             7        7       8    954.00     19.70    115.00   2760.00    472.80
 %
 %     * DATA FOR LOADS
 %           NODE        PX        PY        PZ
@@ -164,168 +173,307 @@ python epframe_viz.py output_file
 %
 %
 %
-%     * PLASTIC HINGE   1 FORMED IN ELEMENT   7 NEAR NODE   8 WHEN LOAD FACTOR IS       30.795
+%     * PLASTIC HINGE   1 FORMED IN ELEMENT   7 NEAR NODE   8 WHEN LOAD FACTOR IS       18.043
+%
+%     ACTIVE SUPPORT STATUS:
 %
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2     -0.15074     -0.01714      0.00306
-%                  3      0.49325     -0.96818      0.00970
-%                  4      0.48457     -1.68715      0.00375
-%                  5      0.47589     -1.55893     -0.00624
-%                  6      0.46721     -0.68904     -0.00999
-%                  7      0.91128     -0.01908      0.00206
+%                  2     -0.08832     -0.01004     -0.00180
+%                  3      0.28901     -0.56728     -0.00569
+%                  4      0.28392     -0.98855     -0.00220
+%                  5      0.27884     -0.91342      0.00365
+%                  6      0.27375     -0.40373      0.00586
+%                  7      0.53395     -0.01118     -0.00121
 %                  8      0.00000      0.00000      0.00000
 %
 %          CUMULATIVE MOMENTS
-%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
-%                  1       1895.62    2904.68      1 AND 2       4680.00
-%                  2      -2904.68    -396.48      2 AND 3       4680.00
-%                  3        396.48   -3035.95      3 AND 4       4680.00
-%                  4       3035.95   -2719.15      4 AND 5       4680.00
-%                  5       2719.15     553.93      5 AND 6       4680.00
-%                  6       -553.93    4000.41      6 AND 7       4680.00
-%                  7      -4000.41   -4680.00      7 AND 8       4680.00
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1      -1110.70   -1701.94      1 AND  2       2760.00       2745.60    -0.0722
+%                  2       1701.94     232.31      2 AND  3       2760.00       2739.56    -0.0861
+%                  3       -232.31    1778.85      3 AND  4       2760.00       2748.68    -0.0640
+%                  4      -1778.85    1593.23      4 AND  5       2760.00       2748.68    -0.0640
+%                  5      -1593.23    -324.56      5 AND  6       2760.00       2748.68    -0.0640
+%                  6        324.56   -2343.96      6 AND  7       2760.00       2733.18    -0.0986
+%                  7       2343.96    2742.15      7 AND  8       2760.00       2742.15    -0.0804
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
-%                  1         -58.29
-%                  2         -69.45
-%                  3         -51.67
-%                  4         -51.67
-%                  5         -51.67
-%                  6         -79.54
-%                  7         -64.89
+%                  1         -34.15
+%                  2         -40.69
+%                  3         -30.27
+%                  4         -30.27
+%                  5         -30.27
+%                  6         -46.61
+%                  7         -38.02
 %
 %          REACTIONS AT SUPPORTS
-%                NODE       FX           FY           MZ
-%                  1        28.57        58.29     -1895.62
-%                  8       -51.67        64.89      4680.00
+%                NODE       FX           FY           MZ         STATUS
+%                  1        16.74        34.15      1110.70    ACTIVE
+%                  8       -30.27        38.02     -2742.15    ACTIVE
 %
 %
 %
-%     * PLASTIC HINGE   2 FORMED IN ELEMENT   7 NEAR NODE   7 WHEN LOAD FACTOR IS       34.400
+%     * PLASTIC HINGE   2 FORMED IN ELEMENT   6 NEAR NODE   7 WHEN LOAD FACTOR IS       20.032
+%
+%     ACTIVE SUPPORT STATUS:
 %
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2     -0.06975     -0.01901      0.00426
-%                  3      0.70473     -1.15926      0.01121
-%                  4      0.69537     -1.97622      0.00413
-%                  5      0.68601     -1.81340     -0.00729
-%                  6      0.67665     -0.80335     -0.01161
-%                  7      1.19660     -0.02145      0.00239
+%                  2     -0.04152     -0.01107     -0.00248
+%                  3      0.40979     -0.67552     -0.00653
+%                  4      0.40432     -1.15177     -0.00241
+%                  5      0.39886     -1.05665      0.00425
+%                  6      0.39340     -0.46767      0.00677
+%                  7      0.69606     -0.01249     -0.00140
 %                  8      0.00000      0.00000      0.00000
 %
 %          CUMULATIVE MOMENTS
-%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
-%                  1       1811.96    3213.66      1 AND 2       4680.00
-%                  2      -3213.66    -587.26      2 AND 3       4680.00
-%                  3        587.26   -3491.69      3 AND 4       4680.00
-%                  4       3491.69   -3093.74      4 AND 5       4680.00
-%                  5       3093.74     606.60      5 AND 6       4680.00
-%                  6       -606.60    4680.00      6 AND 7       4680.00
-%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1      -1059.87   -1875.56      1 AND  2       2760.00       2742.50    -0.0796
+%                  2       1873.98     341.01      2 AND  3       2760.00       2735.96    -0.0933
+%                  3       -342.56    2036.16      3 AND  4       2760.00       2746.95    -0.0688
+%                  4      -2036.40    1803.82      4 AND  5       2760.00       2746.95    -0.0688
+%                  5      -1803.12    -354.99      5 AND  6       2760.00       2746.95    -0.0688
+%                  6        356.75   -2727.90      6 AND  7       2760.00       2727.90    -0.1079
+%                  7       2727.09    2742.15      7 AND  8       2760.00       2737.72    -0.0898
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
-%                  1         -64.65
-%                  2         -75.67
-%                  3         -55.71
-%                  4         -55.71
-%                  5         -55.71
-%                  6         -87.47
-%                  7         -72.95
+%                  1         -37.65
+%                  2         -44.12
+%                  3         -32.51
+%                  4         -32.51
+%                  5         -32.51
+%                  6         -50.99
+%                  7         -42.48
 %
 %          REACTIONS AT SUPPORTS
-%                NODE       FX           FY           MZ
-%                  1        29.91        64.65     -1811.96
-%                  8       -55.71        72.95      4680.00
+%                NODE       FX           FY           MZ         STATUS
+%                  1        17.47        37.65      1059.87    ACTIVE
+%                  8       -32.56        42.48     -2742.15    ACTIVE
 %
 %
 %
-%     * PLASTIC HINGE   3 FORMED IN ELEMENT   4 NEAR NODE   4 WHEN LOAD FACTOR IS       38.937
+%     * PLASTIC HINGE   3 FORMED IN ELEMENT   4 NEAR NODE   4 WHEN LOAD FACTOR IS       22.453
+%
+%     ACTIVE SUPPORT STATUS:
 %
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2      0.46343     -0.02200      0.01002
-%                  3      1.77180     -1.92712      0.01702
-%                  4      1.76244     -3.16360      0.00675
-%                  5      1.75307     -3.04862     -0.00898
-%                  6      1.74371     -1.68029     -0.01720
-%                  7      2.87444     -0.02380     -0.00574
+%                  2      0.28966     -0.01268     -0.00602
+%                  3      1.06487     -1.14086     -0.01003
+%                  4      1.05947     -1.86809     -0.00397
+%                  5      1.05408     -1.80092      0.00527
+%                  6      1.04869     -0.99639      0.01014
+%                  7      1.71994     -0.01373     -0.00752
 %                  8      0.00000      0.00000      0.00000
 %
 %          CUMULATIVE MOMENTS
-%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
-%                  1        576.12    3877.83      1 AND 2       4680.00
-%                  2      -3877.83   -1236.57      2 AND 3       4680.00
-%                  3       1236.57   -4680.00      3 AND 4       4680.00
-%                  4       4680.00   -4385.48      4 AND 5       4680.00
-%                  5       4385.48    -353.02      5 AND 6       4680.00
-%                  6        353.02    4680.00      6 AND 7       4680.00
-%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1       -279.71   -2263.04      1 AND  2       2760.00       2737.05    -0.0912
+%                  2       2252.42     739.25      2 AND  3       2760.00       2733.40    -0.0982
+%                  3       -747.65    2745.09      3 AND  4       2760.00       2747.28    -0.0679
+%                  4      -2747.28    2576.00      4 AND  5       2760.00       2747.28    -0.0679
+%                  5      -2574.03     233.75      5 AND  6       2760.00       2747.28    -0.0679
+%                  6       -221.82   -2727.90      6 AND  7       2760.00       2725.23    -0.1122
+%                  7       2713.26    2742.15      7 AND  8       2760.00       2733.08    -0.0988
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
-%                  1         -74.81
-%                  2         -80.57
-%                  3         -55.71
-%                  4         -55.71
-%                  5         -55.71
-%                  6         -92.06
-%                  7         -80.94
+%                  1         -43.12
+%                  2         -46.42
+%                  3         -32.09
+%                  4         -32.09
+%                  5         -32.09
+%                  6         -53.07
+%                  7         -46.69
 %
 %          REACTIONS AT SUPPORTS
-%                NODE       FX           FY           MZ
-%                  1        26.51        74.81      -576.12
-%                  8       -55.71        80.94      4680.00
+%                NODE       FX           FY           MZ         STATUS
+%                  1        15.14        43.12       279.71    ACTIVE
+%                  8       -32.47        46.69     -2742.15    ACTIVE
+%     *** WARNING: HINGE COUNT (4) EXCEEDS DEGREE OF STATIC INDETERMINACY (3) — KINEMATIC MECHANISM LIKELY
 %
 %
 %
-%     * PLASTIC HINGE   4 FORMED IN ELEMENT   2 NEAR NODE   2 WHEN LOAD FACTOR IS       40.297
+%     * PLASTIC HINGE   4 FORMED IN ELEMENT   1 NEAR NODE   2 WHEN LOAD FACTOR IS       22.923
+%
+%     ACTIVE SUPPORT STATUS:
 %
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2      0.93090     -0.02323      0.01542
-%                  3      2.83075     -2.77427      0.02525
-%                  4      2.82138     -4.83126      0.01546
-%                  5      2.81202     -4.24998     -0.01400
-%                  6      2.80266     -2.37574     -0.02272
-%                  7      4.41972     -0.02417     -0.01167
+%                  2      0.58087     -0.01320     -0.00934
+%                  3      1.71522     -1.65472     -0.01500
+%                  4      1.70990     -2.87657     -0.00921
+%                  5      1.70458     -2.52320      0.00833
+%                  6      1.69926     -1.41246      0.01347
+%                  7      2.66183     -0.01376     -0.01316
 %                  8      0.00000      0.00000      0.00000
 %
 %          CUMULATIVE MOMENTS
-%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
-%                  1       -397.48    4680.00      1 AND 2       4680.00
-%                  2      -4680.00    -965.31      2 AND 3       4680.00
-%                  3        965.31   -4680.00      3 AND 4       4680.00
-%                  4       4680.00   -4526.14      4 AND 5       4680.00
-%                  5       4526.14    -503.72      5 AND 6       4680.00
-%                  6        503.72    4680.00      6 AND 7       4680.00
-%                  7      -4680.00   -4680.00      7 AND 8       4680.00
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1        340.59   -2735.11      1 AND  2       2760.00       2735.11    -0.0950
+%                  2       2715.24     576.53      2 AND  3       2760.00       2732.73    -0.0994
+%                  3       -594.68    2740.31      3 AND  4       2760.00       2747.62    -0.0670
+%                  4      -2747.28    2646.48      4 AND  5       2760.00       2747.62    -0.0670
+%                  5      -2639.91     321.53      5 AND  6       2760.00       2747.62    -0.0670
+%                  6       -299.97   -2727.90      6 AND  7       2760.00       2725.61    -0.1116
+%                  7       2698.96    2742.15      7 AND  8       2760.00       2732.97    -0.0990
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
-%                  1         -78.99
-%                  2         -82.69
-%                  3         -55.71
-%                  4         -55.71
-%                  5         -55.71
-%                  6         -92.78
-%                  7         -82.20
+%                  1         -44.90
+%                  2         -47.00
+%                  3         -31.67
+%                  4         -31.67
+%                  5         -31.67
+%                  6         -52.78
+%                  7         -46.79
 %
 %          REACTIONS AT SUPPORTS
-%                NODE       FX           FY           MZ
-%                  1        25.49        78.99       397.48
-%                  8       -55.71        82.20      4680.00
+%                NODE       FX           FY           MZ         STATUS
+%                  1        14.25        44.90      -340.59    ACTIVE
+%                  8       -32.39        46.79     -2742.15    ACTIVE
+%     *** WARNING: HINGE COUNT (5) EXCEEDS DEGREE OF STATIC INDETERMINACY (3) — KINEMATIC MECHANISM LIKELY
 %
-%     *** DEFORMATIONS LARGER THAN 1000.0 IN CYCLE NO    5
 %
 %
-%     ANALYSIS COMPLETED FOR FRAME NO   0 AT LOAD FACTOR 40.297 
+%     * PLASTIC HINGE   5 FORMED IN ELEMENT   2 NEAR NODE   2 WHEN LOAD FACTOR IS       23.372
+%
+%     ACTIVE SUPPORT STATUS:
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.57287     -0.01348     -0.00241
+%                  3      1.12709     -0.82659     -0.00811
+%                  4      1.12169     -1.38768     -0.00233
+%                  5      1.11629     -1.49918      0.00351
+%                  6      1.11090     -0.84729      0.00872
+%                  7      1.67741     -0.01401     -0.00727
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1        317.08   -2735.11      1 AND  2       2760.00       2734.06    -0.0970
+%                  2       2731.78     578.38      2 AND  3       2760.00       2731.78    -0.1011
+%                  3       -582.85    2746.30      3 AND  4       2760.00       2747.27    -0.0679
+%                  4      -2747.28    2667.60      4 AND  5       2760.00       2747.27    -0.0679
+%                  5      -2668.07     331.08      5 AND  6       2760.00       2747.27    -0.0679
+%                  6       -322.46   -2727.90      6 AND  7       2760.00       2724.49    -0.1134
+%                  7       2713.39    2742.15      7 AND  8       2760.00       2731.97    -0.1008
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -45.84
+%                  2         -47.80
+%                  3         -32.11
+%                  4         -32.11
+%                  5         -32.11
+%                  6         -53.63
+%                  7         -47.65
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ         STATUS
+%                  1        14.39        45.84      -317.08    ACTIVE
+%                  8       -32.47        47.65     -2742.15    ACTIVE
+%     *** WARNING: HINGE COUNT (6) EXCEEDS DEGREE OF STATIC INDETERMINACY (3) — KINEMATIC MECHANISM LIKELY
+%
+%
+%
+%     * PLASTIC HINGE   6 FORMED IN ELEMENT   7 NEAR NODE   7 WHEN LOAD FACTOR IS       23.870
+%
+%     ACTIVE SUPPORT STATUS:
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.56408     -0.01377     -0.00437
+%                  3      0.43140      0.15400      0.00009
+%                  4      0.42591      0.37967      0.00587
+%                  5      0.42043     -0.28227     -0.00220
+%                  6      0.41494     -0.17486      0.00307
+%                  7      0.51023     -0.01430     -0.00028
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1        291.24   -2735.11      1 AND  2       2760.00       2732.91    -0.0991
+%                  2       2731.78     591.40      2 AND  3       2760.00       2730.70    -0.1030
+%                  3       -576.98    2753.54      3 AND  4       2760.00       2746.84    -0.0690
+%                  4      -2747.28    2688.63      4 AND  5       2760.00       2746.84    -0.0690
+%                  5      -2697.57     337.76      5 AND  6       2760.00       2746.84    -0.0690
+%                  6       -344.78   -2727.90      6 AND  7       2760.00       2723.15    -0.1156
+%                  7       2730.79    2742.15      7 AND  8       2760.00       2730.79    -0.1029
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -46.84
+%                  2         -48.72
+%                  3         -32.64
+%                  4         -32.64
+%                  5         -32.64
+%                  6         -54.63
+%                  7         -48.64
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ         STATUS
+%                  1        14.55        46.84      -291.24    ACTIVE
+%                  8       -32.58        48.64     -2742.15    ACTIVE
+%     *** WARNING: HINGE COUNT (7) EXCEEDS DEGREE OF STATIC INDETERMINACY (3) — KINEMATIC MECHANISM LIKELY
+%
+%
+%
+%     * PLASTIC HINGE   7 FORMED IN ELEMENT   5 NEAR NODE   5 WHEN LOAD FACTOR IS       24.664
+%
+%     ACTIVE SUPPORT STATUS:
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.56122     -0.01424     -0.00760
+%                  3     -0.71220      1.78258      0.01372
+%                  4     -0.71779      3.31660      0.01951
+%                  5     -0.72339      1.73984     -0.01169
+%                  6     -0.72899      0.94244     -0.00631
+%                  7     -1.41659     -0.01477     -0.00233
+%                  8      0.00000      0.00000      0.00000
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1        282.83   -2735.11      1 AND  2       2760.00       2731.04    -0.1024
+%                  2       2731.78     619.32      2 AND  3       2760.00       2729.13    -0.1058
+%                  3       -572.94    2765.79      3 AND  4       2760.00       2746.31    -0.0704
+%                  4      -2747.28    2723.05      4 AND  5       2760.00       2746.31    -0.0704
+%                  5      -2746.31     351.56      5 AND  6       2760.00       2746.31    -0.0704
+%                  6       -381.37   -2727.90      6 AND  7       2760.00       2721.16    -0.1186
+%                  7       2730.79    2742.15      7 AND  8       2760.00       2728.85    -0.1062
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1         -48.43
+%                  2         -50.00
+%                  3         -33.30
+%                  4         -33.30
+%                  5         -33.30
+%                  6         -56.09
+%                  7         -50.23
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ         STATUS
+%                  1        14.60        48.43      -282.83    ACTIVE
+%                  8       -32.58        50.23     -2742.15    ACTIVE
+%
+%     *** CUMULATIVE DISPLACEMENT 198.22 EXCEEDS LIMIT 52.80 (0.10 × max frame dimension) IN CYCLE 8
+%
+%
+%     ANALYSIS COMPLETED: A 7-element gable frame with lateral and gravity loads AT LOAD FACTOR 82.485
+
 ```
 
 ### CSV Output File
@@ -350,42 +498,54 @@ Columns:
 
 ## Algorithm
 
-1. **Initialization**
-   
-   - Build compatibility matrix C from geometry
-   - Calculate initial member stiffnesses
+**1. Initialization**
+- Parse title, material properties (E, Fy), section properties (I, A, Z), and support conditions (bidirectional, unidirectional +/−, or free) from input file
+- Derive plastic moment Mp = Z·Fy and axial yield force Py = A·Fy for each element
+- Build compatibility matrix **K** from frame geometry and element connectivity
+- Calculate initial elastic member flexibilities SF (bending) and SA (axial)
+- Compute degree of static indeterminacy DI = 3·NE − ND and displacement limit DLMT = 0.1 × max frame dimension
+- Write initial state to output and CSV files
 
-2. **Load Increment Loop**
-   
-   - Form global stiffness matrix: K = C^T · S · C
-   - Solve for displacements: K · δ = P
-   - Calculate member forces: F = S · C · δ
-   - Find load factor λ to next plastic hinge: λ = (Mp - M) / ΔM
-   - Update cumulative values (displacements, moments, forces)
-   - Modify stiffness at plastic hinge location
-   - Repeat until mechanism forms
+**2. Load Increment Loop**
+- Form elastic element stiffness matrix **S** from current SF and SA (modified at prior hinge locations)
+- Form global elastic stiffness: **K**_e = **K** · **S** · **K**^T
+- Assemble geometric stiffness **K**_g by transforming and scattering the 6×6 element geometric stiffness matrices (eq. 75, Bernoulli-Euler) weighted by current cumulative axial forces CT; add to form total stiffness: **K**_sat = **K**_e + **K**_g
+- Check for geometric instability: if **K**_sat has a negative eigenvalue, report buckling and stop
+- Solve for displacement rates δ using active-set iteration to enforce unidirectional reaction constraints: **K**_sat · δ = **P**, releasing any unidirectional support whose reaction force would act in the wrong direction
+- Calculate member force rates: **F** = **S** · **K**^T · δ; separate into moment rates (SATX_e2) and axial force rates (SATX_ct)
+- Check for compression yield: if |CT[el]| ≥ Py[el] for any element, report and stop
+- Warn if hinge count already exceeds DI (kinematic mechanism masked by geometric stiffness)
+- Find load factor α to next P-M hinge by solving the quadratic at each element end:
 
-3. **Plastic Hinge Modification**
-   
-   - Near-end (hinge location): Stiffness → 0, moment fixed at the value Mp
-   - Far-end: Stiffness reduced to 75% (cantilever effect) .. 4EI/L -> 3EI/L
+  (Mp·ṗ²/Py²)·α² + (s·ṁ + 2·Mp·P₀·ṗ/Py²)·α + (s·M₀ − Mp(1 − P₀²/Py²)) = 0
 
-4. **Termination Conditions**
-   
-   - Collapse mechanism forms (singular stiffness matrix)
-   - Deformations exceed limit (1000)
-   - All elements have formed plastic hinges
+  where s = sign(M₀), ṁ = moment rate, ṗ = axial force rate, M₀ and P₀ are cumulative values; reduces exactly to the linear formula (Mp − |M₀|)/|ṁ| when ṗ ≈ 0
+- Scale all rates by α; update cumulative displacements CD, moments CM, and axial forces CT
+- Check cumulative displacements against DLMT; stop if exceeded
+- Write hinge location, active support status, deformations, moments (with Mp, Mu = Mp(1−(P/Py)²), and P/Py), axial forces, and reactions to output file
+
+**3. Plastic Hinge Modification**
+- At the hinge end (near-end): set both SF entries to zero — bending stiffness goes to zero, moment is locked at current CM value
+- At the far end of the same element: reduce the diagonal SF entry to 75% of its current value (4EI/L → 3EI/L for an intact element, reflecting the loss of far-end rotational restraint) and set the off-diagonal SF entry to zero
+
+**4. Termination Conditions** (in order of priority)
+- **Geometric instability (buckling):** minimum eigenvalue of **K**_sat < 0 before a hinge is found
+- **Collapse mechanism:** **K**_sat is singular (solve returns None); distinguished from buckling by the sign of the minimum eigenvalue — zero eigenvalue is a mechanism, negative is buckling
+- **Compression yield:** |P| ≥ Py in any element, signalling material instability in axial compression
+- **Displacement limit:** any cumulative nodal displacement exceeds DLMT = 0.1 × max(frame span, frame height) — enforced on CD after each update, not on the unscaled rate vector
+- **No further hinge possible:** all α values exceed 10⁹ (all element ends are either already at Mu or relieving)
+- **Kinematic mechanism warning:** hinge count exceeds DI; analysis continues only if geometric stiffness keeps **K**_sat non-singular, and the warning is written to the output file at each such increment
 
 ## Example Results
 
-For the 7-element portal frame example:
+For the 7-element gable frame example:
 
 | Hinge | Element | Node | Load Factor |
 | ----- | ------- | ---- | ----------- |
-| 1     | 7       | 8    | 30.795      |
-| 2     | 7       | 7    | 34.400      |
-| 3     | 4       | 4    | 38.937      |
-| 4     | 2       | 2    | 40.297      |
+| 1     | 7       | 8    | 18.043      |
+| 2     | 6       | 7    | 20.023      |
+| 3     | 4       | 4    | 22.453      |
+| 4     | 1       | 2    | 22.923      |
 
 The frame forms a collapse mechanism after 4 plastic hinges at a load factor of 40.297.
 
