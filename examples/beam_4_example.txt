@@ -15,12 +15,12 @@
 #   - Small upward load: Node 4 lifts off, beam acts as cantilever from Node 1
 #   - Large upward load: Node 4 stays in contact if reaction would be downward
 #
-# This example has an analytical solution that can be verified by hand
+# This problem can be solved analytically with pencil and paper
 
-0                              # Frame number
+analytical solution for one-way support behavior
 
-# NCT  NE   E (ksi)
-   4    3   29000              # 4 nodes, 3 elements, steel
+# NCT  NE   E (ksi)    Fy (ksi)
+   4    3   29000      24        # 4 nodes, 3 elements, modulus, yield stress
 
 # Node data with one-way reactions:
 # Node   X      Y    RX    RY    RZ
@@ -31,10 +31,10 @@
 
 # Element data:
 # Using W12x50 section properties
-# Element N1  N2  I(in^4)  A(in^2)  Mp(in-kips)
- 1         1   2   394      14.6    3600   # Left span (0 to 100)
- 2         2   3   394      14.6    3600   # Middle span (100 to 150)
- 3         3   4   394      14.6    3600   # Right span (150 to 200)
+# Element N1  N2  I(in^4)  A(in^2)  Z (in^3)
+ 1         1   2   394      14.6    77.9   # Left span (0 to 100)
+ 2         2   3   394      14.6    77.9   # Middle span (100 to 150)
+ 3         3   4   394      14.6    77.9   # Right span (150 to 200)
 
 # Number of loaded nodes
 1

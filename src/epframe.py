@@ -1,9 +1,14 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 """
-ELASTIC PLASTIC ANALYSIS OF A PLANE FRAME
-Translated from FORTRAN epframe.f by Hacksoo Lee, 1986
-Python version using standard 0-indexed numpy arrays
+ELASTIC PLASTIC ANALYSIS OF A PLANE FRAME WITH ONE-WAY REACTIONS
+Based on epframe.py with QP solver for inequality constraints
 
+One-way reaction types:
+  '0' or 0   : No reaction (free DOF)
+  '*' or 1   : Bi-directional reaction (standard support)
+  '+' or 2   : Reaction only in positive direction
+  '-' or 3   : Reaction only in negative direction
+  
 Nomenclature:
     Node (N) - connection point in the structure (0-indexed internally, 1-indexed in I/O)
     Element (E) - structural member connecting two nodes (0-indexed internally, 1-indexed in I/O)
@@ -11,7 +16,11 @@ Nomenclature:
 
 import numpy as np
 import sys
+import warnings
 from math import sqrt
+from scipy.linalg import solve
+from scipy.linalg import LinAlgWarning
+from numpy.linalg import LinAlgError
 
 def get_csv_header(NCT, NE):
     """Generate CSV header row"""
@@ -28,82 +37,196 @@ def get_csv_header(NCT, NE):
     # CT - cumulative tension - 1 per element (axial force)
     for el in range(NE):
         headers.append(f'CT{el+1}')
+    # Active status - 3 per node
+    for nd in range(NCT):
+        headers.append(f'ACT{nd+1}_X')
+        headers.append(f'ACT{nd+1}_Y')
+        headers.append(f'ACT{nd+1}_R')
     return ','.join(headers)
 
-def write_csv_row(csv_fp, NCYCL, EL, NH, CLF, CD, CM, CT, DOF, NCT, NE):
-    """Write a data row to CSV file"""
+def write_csv_row(csv_fp, NCYCL, EL, NH, CLF, CD, CM, CT, DOF, RTYPE, active, NCT, NE):
+    """Write a data row to CSV file.
+    Moments and rotations are negated at output to convert from the internal
+    CW-positive element convention to the standard CCW-positive convention."""
     values = [f'{NCYCL}', f'{EL}', f'{NH}', f'{CLF:.6E}']
-    # CD - cumulative displacement - write for all 3*NCT slots
+
+    # CD — negate rotation (dof=2) to convert to CCW-positive
     NN = 0
     for nd in range(NCT):
         for dof in range(3):
             if DOF[nd, dof]:
-                values.append(f'{CD[NN]:.6E}')
+                val = -CD[NN] if dof == 2 else CD[NN]
+                values.append(f'{val:.6E}')
                 NN += 1
             else:
                 values.append(f'{0.0:.6E}')
-    # CM values
+
+    # CM — negate all moments to convert to CCW-positive
     for i in range(2*NE):
-        values.append(f'{CM[i]:.6E}')
-    # CT values
+        values.append(f'{-CM[i]:.6E}')
+
+    # CT — axial forces unchanged
     for i in range(NE):
         values.append(f'{CT[i]:.6E}')
+
+    # Active status
+    NN = 0
+    for nd in range(NCT):
+        for dof in range(3):
+            if DOF[nd, dof]:
+                values.append(f'{int(active[NN])}')
+                NN += 1
+            else:
+                values.append('0')
+
     csv_fp.write(','.join(values) + '\n')
 
-def read_input_file(filename):
-    """Read input file and return problem data
-    
-    Comments: Lines starting with # or text after # are ignored
-    All indices are converted to 0-based internally
+def parse_fixity(fixity_str):
     """
+    Parse fixity string to DOF flags and reaction types
+    
+    Examples:
+        'X Y Z' or 'X* Y* Z*' -> DOF=[0,0,0], RTYPE=[1,1,1]
+        'X Y *' or 'X* Y* 0' -> DOF=[0,0,1], RTYPE=[1,1,0]
+        'X+ Y Z' -> DOF=[0,0,0], RTYPE=[2,1,1]
+        '0 0 0' or '* * *' -> DOF=[1,1,1], RTYPE=[0,0,0]
+    
+    Returns:
+        DOF: [DFX, DFY, DFZ] where 1=free, 0=has constraint
+        RTYPE: [RTX, RTY, RTZ] where 0=free, 1=bi, 2=pos, 3=neg
+    """
+    fixity_str = str(fixity_str).upper().strip()
+    
+    # Initialize as free
+    DOF = [1, 1, 1]
+    RTYPE = [0, 0, 0]
+    
+    # Split by whitespace
+    parts = fixity_str.split()
+    
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        
+        # Determine which coordinate
+        coord_idx = None
+        constraint_char = None
+        
+        if 'X' in part:
+            coord_idx = 0
+            constraint_char = part.replace('X', '')
+        elif 'Y' in part:
+            coord_idx = 1
+            constraint_char = part.replace('Y', '')
+        elif 'Z' in part:
+            coord_idx = 2
+            constraint_char = part.replace('Z', '')
+        else:
+            continue
+        
+        if coord_idx is None:
+            continue
+        
+        # Parse constraint type
+        if constraint_char == '' or constraint_char == '*' or constraint_char == '1':
+            DOF[coord_idx] = 0
+            RTYPE[coord_idx] = 1  # Bidirectional
+        elif constraint_char == '+' or constraint_char == '2':
+            DOF[coord_idx] = 0
+            RTYPE[coord_idx] = 2  # Positive only
+        elif constraint_char == '-' or constraint_char == '3':
+            DOF[coord_idx] = 0
+            RTYPE[coord_idx] = 3  # Negative only
+        elif constraint_char == '0':
+            DOF[coord_idx] = 1
+            RTYPE[coord_idx] = 0  # Free
+    
+    # Ensure consistency:
+    #   Bidirectional (RTYPE==1): permanently constrained, excluded from global DOF vector (DOF=0)
+    #   One-way (RTYPE==2 or 3): conditionally constrained; MUST stay in global DOF vector (DOF=1)
+    #                             so the active-set solver can enforce or release the constraint
+    #   Free (RTYPE==0): unconstrained, included in global DOF vector (DOF=1)
+    for i in range(3):
+        if RTYPE[i] == 1:
+            DOF[i] = 0   # permanently removed from displacement vector
+        else:
+            DOF[i] = 1   # in displacement vector (free or conditionally constrained)
+    
+    return DOF, RTYPE
+
+def read_input_file(filename):
+    """Read input file with one-way reaction support"""
     with open(filename, 'r') as f:
         lines = []
         for line in f:
-            # Remove comments (everything from # to end of line)
             line = line.split('#')[0].strip()
-            if line:  # Skip empty lines
+            if line:
                 lines.append(line)
     
     idx = 0
-    FN = int(lines[idx].split()[0])  # Frame number
+    title = lines[idx].strip()   # first line is a free-text title, not a number
     idx += 1
     
     parts = lines[idx].split()
-    NCT, NE, E = int(parts[0]), int(parts[1]), float(parts[2])  # Node count, Number of elements, Modulus
+    NCT, NE, E, Fy = int(parts[0]), int(parts[1]), float(parts[2]), float(parts[3])
     idx += 1
     
-    # Node data (0-indexed)
+    # Node data
     CORD = np.zeros((NCT, 2))
-    DOF = np.zeros((NCT, 3), dtype=int) # indicates degree-of-freedom coordinates
+    DOF = np.zeros((NCT, 3), dtype=int)
+    RTYPE = np.zeros((NCT, 3), dtype=int)
     
     for i in range(NCT):
         parts = lines[idx].split()
-        # Input node number is 1-based, but we store at 0-based index
-        node_num = int(parts[0]) - 1  # Convert to 0-indexed
+        node_num = int(parts[0]) - 1
         CORD[node_num, 0] = float(parts[1])
         CORD[node_num, 1] = float(parts[2])
-        DOF[node_num, 0] = int(parts[3])
-        DOF[node_num, 1] = int(parts[4])
-        DOF[node_num, 2] = int(parts[5])
+        
+        # Check format - try to distinguish old numeric (0/1) from new string format
+        # Old format: three separate integers (0 or 1)
+        # New format: strings with X, Y, Z, *, +, -, or 0
+        try:
+            # Try parsing as old numeric format
+            if len(parts) >= 6:
+                rx = int(parts[3])
+                ry = int(parts[4])
+                rz = int(parts[5])
+                # Successfully parsed as integers - use old format
+                DOF[node_num, 0] = 1 - rx
+                DOF[node_num, 1] = 1 - ry
+                DOF[node_num, 2] = 1 - rz
+                RTYPE[node_num, :] = [1 if d == 0 else 0 for d in DOF[node_num, :]]
+            else:
+                raise ValueError("Not enough parts for old format")
+        except ValueError:
+            # New format - parse as fixity string
+            fixity_str = ' '.join(parts[3:])
+            dof, rtype = parse_fixity(fixity_str)
+            DOF[node_num, :] = dof
+            RTYPE[node_num, :] = rtype
+        
         idx += 1
-
-    DOF = 1 - DOF  # change RCT 1 to DOF 0 and RCT 0 to DOF 1
     
-    # Element data (0-indexed, connectivity stores 0-based node indices)
-    ECON = np.zeros((NE, 2), dtype=int)  # Element connectivity
-    SMA = np.zeros(NE)   # Second moment of area (I)
-    AREA = np.zeros(NE)  # Cross-sectional area
-    PM = np.zeros(NE)    # Plastic moment
+    # Element data
+    ECON = np.zeros((NE, 2), dtype=int)
+    SMA = np.zeros(NE)
+    AREA = np.zeros(NE)
+    ZS = np.zeros(NE)    # plastic section modulus Z (in^3)
     
     for i in range(NE):
         parts = lines[idx].split()
-        elem_num = int(parts[0]) - 1  # Convert to 0-indexed
-        ECON[elem_num, 0] = int(parts[1]) - 1  # Node 1 (0-indexed)
-        ECON[elem_num, 1] = int(parts[2]) - 1  # Node 2 (0-indexed)
-        SMA[elem_num] = float(parts[3])
+        elem_num = int(parts[0]) - 1
+        ECON[elem_num, 0] = int(parts[1]) - 1
+        ECON[elem_num, 1] = int(parts[2]) - 1
+        SMA[elem_num]  = float(parts[3])
         AREA[elem_num] = float(parts[4])
-        PM[elem_num] = float(parts[5])
+        ZS[elem_num]   = float(parts[5])    # plastic section modulus
         idx += 1
+    
+    # Derived section capacities
+    PM = ZS * Fy          # plastic moment  Mp = Z * Fy  (in-kips)
+    PY = AREA * Fy        # axial yield force  Py = A * Fy  (kips)
     
     # Load data
     LN = int(lines[idx].split()[0])
@@ -112,34 +235,169 @@ def read_input_file(filename):
     loads = []
     for i in range(LN):
         parts = lines[idx].split()
-        NH = int(parts[0]) - 1  # Convert to 0-indexed
+        NH = int(parts[0]) - 1
         FX = float(parts[1])
         FY = float(parts[2])
         FZ = float(parts[3])
         loads.append((NH, FX, FY, FZ))
         idx += 1
     
-    return FN, NCT, NE, E, CORD, DOF, ECON, SMA, AREA, PM, loads
+    return title, NCT, NE, E, Fy, CORD, DOF, RTYPE, ECON, SMA, AREA, ZS, PM, PY, loads
 
-def epframe_analysis(input_file, output_file):
-    """Main elastic-plastic frame analysis"""
+def solve_with_active_set(KSAT, LV, ND, DOF, RTYPE, NCT,
+                          tol_contact=1e-6, max_iter=50, verbose=False):
+    """
+    Solve with one-way reaction constraints using active set method
+    
+    Returns:
+        disp: displacement vector (ND,)
+        active: boolean array indicating active constraints (ND,)
+    """
+    # Map global DOF indices to node/coord
+    dof_to_rtype = []
+    
+    for nd in range(NCT):
+        for coord in range(3):
+            if DOF[nd, coord]:
+                dof_to_rtype.append(RTYPE[nd, coord])
+    
+    # Classify DOFs
+    free_dofs = [i for i, rt in enumerate(dof_to_rtype) if rt == 0]
+    bi_dofs = [i for i, rt in enumerate(dof_to_rtype) if rt == 1]
+    pos_dofs = [i for i, rt in enumerate(dof_to_rtype) if rt == 2]
+    neg_dofs = [i for i, rt in enumerate(dof_to_rtype) if rt == 3]
+    
+    # If no one-way reactions, use standard solver
+    if len(pos_dofs) == 0 and len(neg_dofs) == 0:
+        if verbose:
+            print("  No one-way reactions. Using standard solver.")
+        active = np.zeros(ND, dtype=bool)
+        active[bi_dofs] = True
+        
+        if len(free_dofs) == 0:
+            return np.zeros(ND), active
+        
+        disp = np.zeros(ND)
+        free_dofs = np.array(free_dofs)
+        try:
+            disp[free_dofs] = solve(KSAT[np.ix_(free_dofs, free_dofs)], LV[free_dofs])
+        except (LinAlgError, np.linalg.LinAlgError):
+            return None, active
+        return disp, active
+    
+    # Active set iteration
+    active_set = set(bi_dofs + pos_dofs + neg_dofs)
+    
+    if verbose:
+        print(f"  Active set iteration:")
+        print(f"    Free: {len(free_dofs)}, Bi: {len(bi_dofs)}, "
+              f"Pos: {len(pos_dofs)}, Neg: {len(neg_dofs)}")
+    
+    for iteration in range(max_iter):
+        active_list = sorted(list(active_set))
+        free_list = sorted(set(range(ND)) - active_set)
+        
+        if len(free_list) == 0:
+            disp = np.zeros(ND)
+            Rv = KSAT @ disp - LV
+            break
+        
+        # Solve
+        disp = np.zeros(ND)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', LinAlgWarning)
+                disp[free_list] = solve(
+                    KSAT[np.ix_(free_list, free_list)],
+                    LV[free_list] - KSAT[np.ix_(free_list, active_list)] @ disp[active_list]
+                )
+        except (LinAlgError, np.linalg.LinAlgError):
+            active = np.zeros(ND, dtype=bool)
+            active[list(active_set)] = True
+            return None, active
+        
+        # Early exit: if displacements are unreasonably large, a mechanism has formed
+        if np.max(np.abs(disp)) > 1.0e10:
+            if verbose:
+                print(f"    Iter {iteration}: collapse mechanism detected (disp={np.max(np.abs(disp)):.2e})")
+            active = np.zeros(ND, dtype=bool)
+            active[list(active_set)] = True
+            return None, active
+        
+        # Reactions
+        Rv = KSAT @ disp - LV
+        
+        # Check complementarity
+        violations = []
+        
+        for i in pos_dofs:
+            if i in active_set:
+                if Rv[i] < -tol_contact:
+                    violations.append(('remove_pos', i, Rv[i]))
+            else:
+                if disp[i] < -tol_contact:
+                    violations.append(('add_pos', i, disp[i]))
+        
+        for i in neg_dofs:
+            if i in active_set:
+                if Rv[i] > tol_contact:
+                    violations.append(('remove_neg', i, Rv[i]))
+            else:
+                if disp[i] > tol_contact:
+                    violations.append(('add_neg', i, disp[i]))
+        
+        max_viol = max([abs(v[2]) for v in violations]) if violations else 0
+        
+        if verbose and iteration < 10:
+            print(f"    Iter {iteration}: {len(active_list)} active, "
+                  f"{len(violations)} violations, max={max_viol:.2e}")
+        
+        if len(violations) == 0:
+            if verbose:
+                print(f"    Converged in {iteration} iterations")
+            break
+        
+        # Update
+        violations.sort(key=lambda x: abs(x[2]), reverse=True)
+        vtype, vidx, vval = violations[0]
+        
+        if 'remove' in vtype:
+            active_set.remove(vidx)
+        else:
+            active_set.add(vidx)
+    
+    else:
+        if verbose:
+            print(f"  Warning: Did not converge in {max_iter} iterations")
+    
+    active = np.zeros(ND, dtype=bool)
+    active[list(active_set)] = True
+    
+    return disp, active
+
+def epframe_oneway_analysis(input_file, output_file, 
+                            tol_contact=1e-6, tol_plastic_factor=0.001,
+                            max_contact_iter=50):
+    """Main elastic-plastic frame analysis with one-way reactions"""
     
     # Read input
-    FN, NCT, NE, E, CORD, DOF, ECON, SMA, AREA, PM, loads = read_input_file(input_file)
+    title, NCT, NE, E, Fy, CORD, DOF, RTYPE, ECON, SMA, AREA, ZS, PM, PY, loads = \
+        read_input_file(input_file)
     
-    # Open output file and CSV file
+    # Open output files
     fp = open(output_file, 'w')
     csv_file = output_file + '.csv'
     csv_fp = open(csv_file, 'w')
     
-    # Write CSV header
+    # Write CSV: title row first, then column headers
+    csv_fp.write(f'"{title}"\n')
     csv_fp.write(get_csv_header(NCT, NE) + '\n')
     
-    fp.write(f"%\n")
-    fp.write(f"%     ELASTIC PLASTIC ANALYSIS OF FRAME NO {FN}\n")
-    fp.write(f"%     ---------------------------------------\n%\n")
+    fp.write("%\n")
+    fp.write(f"%     {title}\n")
+    fp.write("%     " + "-"*len(title) + "\n%\n")
     
-    # Calculate number of DOFs (coordinates without reactions) 
+    # Calculate number of DOFs
     ND = int(np.sum(DOF))
     
     # Initialize load vector
@@ -150,35 +408,35 @@ def epframe_analysis(input_file, output_file):
         NH, FX, FY, FZ = load
         OLEN = [FX, FY, FZ]
         
-        # Count DOFs before this node
         NN = 0
         for nd in range(NH):
             NN += np.sum(DOF[nd])
         
-        # Assign loads to corresponding DOFs
         for k in range(3):
             if DOF[NH, k]:
                 LV[NN] = OLEN[k]
                 NN += 1
     
-    fp.write(f"%     * GENERAL DATA\n")
+    fp.write("%     * GENERAL DATA\n")
     fp.write(f"%          NUMBER OF NODES         {NCT:6d}\n")
     fp.write(f"%          NUMBER OF ELEMENTS      {NE:6d}\n")
-    fp.write(f"%          MOD OF ELASTICITY  {E:12.1f}\n%\n")
+    fp.write(f"%          MOD OF ELASTICITY  {E:12.1f}\n")
+    fp.write(f"%          YIELD STRESS       {Fy:12.1f}\n%\n")
     
-    # Input Echo: Node Data
+    # Input echo
     fp.write("%\n%     * DATA FOR NODES\n")
-    fp.write("%           NODE   X-COORD   Y-COORD    RX    RY    RZ\n%\n")
+    fp.write("%           NODE   X-COORD   Y-COORD    RX-TYPE  RY-TYPE  RZ-TYPE\n%\n")
+    rtype_names = ['FREE', 'BI', 'POS', 'NEG']
     for i in range(NCT):
-        fp.write(f"%{i+1:14d}{CORD[i,0]:12.2f}{CORD[i,1]:10.2f}{1-DOF[i,0]:6d}{1-DOF[i,1]:6d}{1-DOF[i,2]:6d}\n")
+        fp.write(f"%{i+1:14d}{CORD[i,0]:12.2f}{CORD[i,1]:10.2f}"
+                f"{rtype_names[RTYPE[i,0]]:>10s}{rtype_names[RTYPE[i,1]]:>9s}{rtype_names[RTYPE[i,2]]:>9s}\n")
     
-    # Input Echo: Element Data
     fp.write("%\n%     * DATA FOR ELEMENTS\n")
-    fp.write("%         ELEMENT    N1      N2       IXX      AREA        MP\n%\n")
+    fp.write("%         ELEMENT    N1      N2       IXX      AREA         Z        MP        PY\n%\n")
     for i in range(NE):
-        fp.write(f"%{i+1:14d}{ECON[i,0]+1:9d}{ECON[i,1]+1:8d}{SMA[i]:10.2f}{AREA[i]:10.2f}{PM[i]:10.2f}\n")
+        fp.write(f"%{i+1:14d}{ECON[i,0]+1:9d}{ECON[i,1]+1:8d}"
+                f"{SMA[i]:10.2f}{AREA[i]:10.2f}{ZS[i]:10.2f}{PM[i]:10.2f}{PY[i]:10.2f}\n")
     
-    # Input Echo: Load Data
     fp.write("%\n%     * DATA FOR LOADS\n")
     fp.write("%           NODE        PX        PY        PZ\n")
     for load in loads:
@@ -194,7 +452,6 @@ def epframe_analysis(input_file, output_file):
         OLEN_elems[i] = sqrt(dx*dx + dy*dy)
     
     # Calculate stiffness coefficients
-    # SF[2*i, :] and SF[2*i+1, :] are the 2x2 flexural stiffness for element i
     SF = np.zeros((2*NE, 2))
     SA = np.zeros(NE)
     
@@ -205,32 +462,42 @@ def epframe_analysis(input_file, output_file):
         SF[2*i, 1] = SF[2*i+1, 0]
         SA[i] = E * AREA[i] / OLEN_elems[i]
     
-    E2 = 2 * NE  # Number of element end moments
-    E3 = 3 * NE  # Total element DOFs (2 moments + 1 axial per element)
+    E2 = 2 * NE
+    E3 = 3 * NE
     
     # Initialize cumulative variables
-    CM = np.zeros(E2)   # Cumulative moments
-    CT = np.zeros(NE)   # Cumulative tensions
-    CD = np.zeros(ND)    # Cumulative displacements
+    CM = np.zeros(E2)
+    CT = np.zeros(NE)
+    CD = np.zeros(ND)
     
     NCYCL = 0
     CLF = 0.0
     
-    # Write initial state record (cycle 0) to CSV
-    write_csv_row(csv_fp, 0, 0, 0, 0.0, CD, CM, CT, DOF, NCT, NE)
+    # Initial active status
+    active = np.ones(ND, dtype=bool)
+    for i in range(ND):
+        active[i] = False
+    dof_idx = 0
+    for nd in range(NCT):
+        for coord in range(3):
+            if DOF[nd, coord]:
+                if RTYPE[nd, coord] > 0:
+                    active[dof_idx] = True
+                dof_idx += 1
+    
+    # Write initial state
+    write_csv_row(csv_fp, 0, 0, 0, 0.0, CD, CM, CT, DOF, RTYPE, active, NCT, NE)
     
     # Build compatibility matrix K
-    # Each row corresponds to a DOF, each column to an element force
     K = np.zeros((ND, E3))
     
-    row_start = 0  # Starting row for current node
+    row_start = 0
     
     for nd in range(NCT):
         for el in range(NE):
-            # Check if node nd is connected to element el
             if nd == ECON[el, 0]:
-                NF = ECON[el, 1]  # Far node
-                EI_near = 2*el    # Element moment index at near end (0-indexed)
+                NF = ECON[el, 1]
+                EI_near = 2*el
                 EI_far = 2*el + 1
             elif nd == ECON[el, 1]:
                 NF = ECON[el, 0]
@@ -242,11 +509,10 @@ def epframe_analysis(input_file, output_file):
             X = CORD[NF, 0] - CORD[nd, 0]
             Y = CORD[NF, 1] - CORD[nd, 1]
             L = sqrt(X*X + Y*Y)
-            S = Y / L #   sine
-            C = X / L # cosine
-            axial_col = 2*NE + el  # Column for axial force
+            S = Y / L
+            C = X / L
+            axial_col = 2*NE + el
             
-            # Fill rows for this node's free DOFs
             NA = row_start
             if DOF[nd, 0]:
                 K[NA, EI_near] = S / L
@@ -263,17 +529,18 @@ def epframe_analysis(input_file, output_file):
             if DOF[nd, 2]:
                 K[NA, EI_near] = 1.0
         
-        # Advance row_start by number of DOFs at this node
         row_start += int(np.sum(DOF[nd]))
     
     # Main analysis loop
+    print("\n=== ELASTIC-PLASTIC ANALYSIS WITH ONE-WAY REACTIONS ===\n")
+    
     while True:
         NCYCL += 1
+        print(f"\n--- Load Increment {NCYCL} ---")
         
-        # Build the full E3 x E3 element stiffness matrix S_full
+        # Build element stiffness matrix
         S_full = np.zeros((E3, E3))
         
-        # Fill in 2x2 blocks for each element's flexural stiffness
         for i in range(NE):
             row = 2*i
             S_full[row, row] = SF[2*i, 0]
@@ -281,62 +548,140 @@ def epframe_analysis(input_file, output_file):
             S_full[row+1, row] = SF[2*i+1, 0]
             S_full[row+1, row+1] = SF[2*i+1, 1]
         
-        # Fill diagonal for axial stiffness
         for i in range(NE):
             S_full[E2+i, E2+i] = SA[i]
         
-        # Form stiffness matrix: KSAT = K @ S_full @ K.T
+        # Form stiffness matrix
         KSAT = K @ S_full @ K.T
         
-        # Solve system using numpy linear algebra
-        try:
-            disp = np.linalg.solve(KSAT, LV)
-        except np.linalg.LinAlgError:
-            fp.write("%     * DIVISION BY ZERO IN SOLUTION OF EQUATION\n%\n")
+        # Solve with active set
+        disp, active = solve_with_active_set(
+            KSAT, LV, ND, DOF, RTYPE, NCT,
+            tol_contact, max_contact_iter, verbose=True
+        )
+        
+        if disp is None:
+            msg = (f"     *** COLLAPSE MECHANISM DETECTED IN CYCLE {NCYCL}: "
+                   f"STIFFNESS MATRIX IS SINGULAR\n")
+            fp.write(f"%\n%{msg}%\n")
+            print(f"\n{msg.strip()}")
             break
         
-        # Check for excessive deformations
+        # Check deformations
         DLMT = 1000.0
         max_disp = np.max(np.abs(disp))
         
         if max_disp > DLMT:
             fp.write(f"%\n%     *** DEFORMATIONS LARGER THAN {DLMT:.1f} IN CYCLE NO {NCYCL:4d}\n%\n")
+            print(f"\nDeformations exceed limit ({max_disp:.2e} > {DLMT:.1f})")
             break
         
-        # Calculate element deformations and forces
+        # Calculate forces
         CSAT = K.T @ disp
         SATX = S_full @ CSAT
         
-        # Calculate load factors to plastic hinge
-        SATX_e2 = SATX[:E2]  # Moments
+        SATX_e2 = SATX[:E2]   # moment rates (one per element end)
+        SATX_ct = SATX[E2:]   # axial force rates (one per element)
+
+        # --- Check for compression yield before finding next hinge ---
+        # If any element already has |P| >= Py, stop immediately
+        for el in range(NE):
+            if abs(CT[el]) >= PY[el]:
+                msg = (f"     *** COMPRESSION YIELD IN ELEMENT {el+1}: "
+                       f"|P|={abs(CT[el]):.1f} >= Py={PY[el]:.1f}\n")
+                fp.write(f"%\n%{msg}%\n")
+                print(f"\n{msg.strip()}")
+                # Signal clean exit via break-out flag
+                SATX = None
+                break
+        if SATX is None:
+            break
+
+        # --- P-M quadratic solve for load factor to next hinge ---
+        # At element end k (element el, end 0 or 1):
+        #   M0 = CM[k]          cumulative moment
+        #   mdot = SATX_e2[k]   moment rate
+        #   P0 = CT[el]         cumulative axial force
+        #   pdot = SATX_ct[el]  axial force rate
+        #
+        # Hinge condition: |M0 + α·mdot| = Mp·(1 − ((P0+α·pdot)/Py)²)
+        # For the end that is loading toward Mp (TEST = M0·mdot >= 0):
+        #   Let s = sign(mdot) if M0≈0, else sign(M0)
+        #   s·(M0 + α·mdot) = Mp·(1 − (P0 + α·pdot)²/Py²)
+        # Rearranged: A·α² + B·α + C = 0 where
+        #   A =  Mp·pdot²/Py²
+        #   B =  s·mdot + 2·Mp·P0·pdot/Py²
+        #   C =  s·M0 − Mp·(1 − P0²/Py²)
+        # When pdot=0 this reduces to the original linear formula α = (Mp−|M0|)/|mdot|
+
+        ALF_pm = np.full(E2, 1.0e10)
+
+        for k in range(E2):
+            el = k // 2
+            mdot = SATX_e2[k]
+            M0   = CM[k]
+            pdot = SATX_ct[el]
+            P0   = CT[el]
+            mp   = PM[el]
+            py   = PY[el]
+
+            # Only consider ends where moment is growing toward capacity
+            if abs(mdot) < tol_plastic_factor * mp and abs(M0) < mp:
+                continue
+            if M0 * mdot < 0.0:   # moment relieving, not approaching hinge
+                continue
+
+            # Current Mu at this end
+            ratio0 = P0 / py
+            if abs(ratio0) >= 1.0:
+                # Already at or past compression yield — flag handled above
+                continue
+            Mu0 = mp * (1.0 - ratio0**2)
+
+            if abs(M0) >= Mu0 - tol_plastic_factor * mp:
+                # Already at capacity (hinge exists here); skip
+                continue
+
+            s = np.sign(M0) if abs(M0) > tol_plastic_factor * mp else np.sign(mdot)
+
+            A = mp * pdot**2 / py**2
+            B = s * mdot + 2.0 * mp * P0 * pdot / py**2
+            C = s * M0 - mp * (1.0 - (P0/py)**2)
+
+            if abs(A) < 1.0e-14 * abs(B):
+                # Linear case (pdot ≈ 0): α = −C / B
+                if abs(B) > 1.0e-14:
+                    alpha = -C / B
+                    if alpha > 0.0:
+                        ALF_pm[k] = alpha
+            else:
+                disc = B**2 - 4.0 * A * C
+                if disc < 0.0:
+                    continue   # no real root — Mu never reached
+                sq = sqrt(disc)
+                for alpha in [(-B + sq) / (2.0*A), (-B - sq) / (2.0*A)]:
+                    if alpha > 1.0e-10:
+                        ALF_pm[k] = min(ALF_pm[k], alpha)
+
+        PHN  = int(np.argmin(ALF_pm))
+        SALF = ALF_pm[PHN]
+
+        if SALF > 1.0e9:
+            msg = f"     *** NO FURTHER HINGE POSSIBLE IN CYCLE {NCYCL}\n"
+            fp.write(f"%\n%{msg}%\n")
+            print(f"\n{msg.strip()}")
+            break
         
-        # Element index for each moment location
-        elem_indices = np.arange(E2) // 2
-        PM_expanded = PM[elem_indices]
-        
-        # Calculate load factor to reach plastic moment
-        ZERO = 0.001 * PM_expanded
-        small_satx = np.abs(SATX_e2) < ZERO
-        safe_denom = np.where(small_satx, 1.0, np.abs(SATX_e2))
-        ALF = np.where(small_satx, 1.0E10, (PM_expanded - np.abs(CM)) / safe_denom)
-        
-        # Find minimum load factor where moment is increasing (same sign)
-        TEST = CM * SATX_e2
-        valid_mask = TEST >= 0.0
-        ALF_masked = np.where(valid_mask, ALF, 1.0E10)
-        PHN = int(np.argmin(ALF_masked))  # 0-indexed plastic hinge node
-        SALF = ALF_masked[PHN]
-        
-        # Scale forces and update cumulative values of ...  
+        # Update cumulative values
         SATX *= SALF
-        disp *= SALF     
-        CD += disp      # cumulative displacemtn
-        CLF += SALF     # cumulative load factor
-        CM += SATX[:E2] # cumulative moments 
-        CT += SATX[E2:] # cumulative tension
+        disp *= SALF
+        CD += disp
+        CLF += SALF
+        CM += SATX[:E2]
+        CT += SATX[E2:]
         
-        # Determine which element and node
-        EL = PHN // 2  # 0-indexed element
+        # Hinge location
+        EL = PHN // 2
         if PHN % 2 == 0:
             NH = ECON[EL, 0]
         else:
@@ -345,10 +690,46 @@ def epframe_analysis(input_file, output_file):
         EL_hinge = EL
         NH_hinge = NH
         
-        # Print results (convert to 1-indexed for display)
+        # Output
         fp.write("%\n%\n%\n")
-        fp.write(f"%     * PLASTIC HINGE {NCYCL:3d} FORMED IN ELEMENT {EL+1:3d} NEAR NODE {NH+1:3d} WHEN LOAD FACTOR IS {CLF:12.3f}\n%\n")
+        fp.write(f"%     * PLASTIC HINGE {NCYCL:3d} FORMED IN ELEMENT {EL+1:3d} "
+                f"NEAR NODE {NH+1:3d} WHEN LOAD FACTOR IS {CLF:12.3f}\n%\n")
         
+        print(f"*** HINGE {NCYCL} in element {EL+1} near node {NH+1} at λ = {CLF:.3f}")
+        
+        # Active support status
+        fp.write("%     ACTIVE SUPPORT STATUS:\n")
+        print("\nActive Support Status:")
+        
+        dof_idx = 0
+        rtype_names = ['FREE', 'BI', 'POS', 'NEG']
+        coord_names = ['X', 'Y', 'Z']
+        
+        for nd in range(NCT):
+            has_reaction = np.any(RTYPE[nd, :] > 0)
+            if not has_reaction:
+                for coord in range(3):
+                    if DOF[nd, coord]:
+                        dof_idx += 1
+                continue
+            
+            status_parts = []
+            for coord in range(3):
+                if DOF[nd, coord]:
+                    if RTYPE[nd, coord] > 0:
+                        is_active = active[dof_idx]
+                        status = "ACTIVE" if is_active else "LIFT-OFF"
+                        status_parts.append(f"{coord_names[coord]}={rtype_names[RTYPE[nd,coord]]}:{status}")
+                    dof_idx += 1
+            
+            if status_parts:
+                status_str = ', '.join(status_parts)
+                fp.write(f"%       NODE {nd+1:3d}: {status_str}\n")
+                print(f"  Node {nd+1}: {status_str}")
+        
+        fp.write("%\n")
+        
+        # Displacements
         fp.write("%          CUMULATIVE DEFORMATIONS\n")
         fp.write("%                NODE    X-DISP       Y-DISP       ROTN\n")
         
@@ -357,54 +738,62 @@ def epframe_analysis(input_file, output_file):
             disp_out = [0.0, 0.0, 0.0]
             for dof in range(3):
                 if DOF[nd, dof]:
-                    disp_out[dof] = CD[NN]
+                    # Negate rotation (dof=2): convert internal CW-positive to CCW-positive
+                    disp_out[dof] = -CD[NN] if dof == 2 else CD[NN]
                     NN += 1
             fp.write(f"%{nd+1:19d}{disp_out[0]:13.5f}{disp_out[1]:13.5f}{disp_out[2]:13.5f}\n")
         
+        # Moments — include Mu and P/Py
         fp.write("%\n%          CUMULATIVE MOMENTS\n")
-        fp.write("%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM\n")
+        fp.write("%             ELEMENT       END MOMENTS             NODES"
+                 "     PLASTIC MOM   ULTIMATE MOM      P / Py\n")
         
         for el in range(NE):
             k = 2*el
-            fp.write(f"%{el+1:19d}{CM[k]:14.2f}{CM[k+1]:11.2f}{ECON[el,0]+1:7d} AND{ECON[el,1]+1:2d}{PM[el]:14.2f}\n")
+            p_ratio = CT[el] / PY[el]
+            Mu = PM[el] * (1.0 - p_ratio**2)
+            fp.write(f"%{el+1:19d}{-CM[k]:14.2f}{-CM[k+1]:11.2f}"
+                    f"{ECON[el,0]+1:7d} AND {ECON[el,1]+1:2d}"
+                    f"{PM[el]:14.2f}{Mu:14.2f}{p_ratio:11.4f}\n")
         
+        # Axial forces
         fp.write("%\n%          CUMULATIVE TENSION FORCES\n")
         fp.write("%             ELEMENT     TENSION\n")
         
         for el in range(NE):
             fp.write(f"%{el+1:19d}{CT[el]:15.2f}\n")
         
-        # Calculate and output reactions at support nodes
+        # Reactions
         fp.write("%\n%          REACTIONS AT SUPPORTS\n")
-        fp.write("%                NODE       FX           FY           MZ\n")
+        fp.write("%                NODE       FX           FY           MZ         STATUS\n")
         
+        dof_idx = 0
         for nd in range(NCT):
-            # Check if this node has any restrained DOFs
-            is_support = (DOF[nd, 0] == 0 or DOF[nd, 1] == 0 or DOF[nd, 2] == 0)
+            is_support = np.any(RTYPE[nd, :] > 0)
             if not is_support:
+                for coord in range(3):
+                    if DOF[nd, coord]:
+                        dof_idx += 1
                 continue
             
             Rx, Ry, Rz = 0.0, 0.0, 0.0
             
-            # Sum contributions from all elements connected to this node
             for el in range(NE):
                 N1, N2 = ECON[el, 0], ECON[el, 1]
                 
                 if N1 != nd and N2 != nd:
                     continue
                 
-                # Get element geometry (direction from N1 to N2)
                 dx = CORD[N2, 0] - CORD[N1, 0]
                 dy = CORD[N2, 1] - CORD[N1, 1]
                 L_el = sqrt(dx*dx + dy*dy)
                 Cx = dx / L_el
                 Sy = dy / L_el
                 
-                # Get element forces
-                Me1 = CM[2*el]      # Moment at N1 end
-                Me2 = CM[2*el + 1]  # Moment at N2 end
-                N_ax = CT[el]       # Axial force (tension positive)
-                V = (Me1 + Me2) / L_el  # Shear
+                Me1 = CM[2*el]
+                Me2 = CM[2*el + 1]
+                N_ax = CT[el]
+                V = (Me1 + Me2) / L_el
                 
                 if N1 == nd:
                     Rx += N_ax * Cx - V * Sy
@@ -415,35 +804,50 @@ def epframe_analysis(input_file, output_file):
                     Ry += -N_ax * Sy - V * Cx
                     Rz += Me2
             
-            fp.write(f"%{nd+1:19d}{-Rx:13.2f}{-Ry:13.2f}{-Rz:13.2f}\n")
+            # Check inactive constraints
+            inactive = []
+            for coord in range(3):
+                if DOF[nd, coord] and RTYPE[nd, coord] > 0:
+                    if not active[dof_idx]:
+                        inactive.append(coord_names[coord])
+                    dof_idx += 1
+                elif not DOF[nd, coord]:
+                    pass
+                else:
+                    dof_idx += 1
+            
+            status_str = "LIFT-OFF:" + ','.join(inactive) if inactive else "ACTIVE"
+            fp.write(f"%{nd+1:19d}{-Rx:13.2f}{-Ry:13.2f}{Rz:13.2f}    {status_str}\n")
         
-        # Write data row to CSV
-        write_csv_row(csv_fp, NCYCL, EL_hinge+1, NH_hinge+1, CLF, CD, CM, CT, DOF, NCT, NE)
+        # CSV output
+        write_csv_row(csv_fp, NCYCL, EL_hinge+1, NH_hinge+1, CLF, CD, CM, CT, 
+                     DOF, RTYPE, active, NCT, NE)
         
-        # Modify stiffness for plastic hinge
+        # Modify stiffness
         if PHN % 2 == 0:
-            # Hinge at first end of element
             SF[PHN+1, 1] = 0.75 * SF[PHN+1, 1]
             SF[PHN+1, 0] = 0.0
             SF[PHN, 0] = 0.0
             SF[PHN, 1] = 0.0
         else:
-            # Hinge at second end of element
             SF[PHN-1, 0] = 0.75 * SF[PHN-1, 0]
             SF[PHN-1, 1] = 0.0
             SF[PHN, 0] = 0.0
             SF[PHN, 1] = 0.0
-        print(f"    LOAD FACTOR {NCYCL:2d} = {CLF:.3f} ")
+        
+        print(f"    LOAD FACTOR {NCYCL:2d} = {CLF:.3f}")
     
-    fp.write(f"%\n%     ANALYSIS COMPLETED FOR FRAME NO {FN:3d} AT LOAD FACTOR {CLF:.3f} \n\n")
+    fp.write(f"%\n%     ANALYSIS COMPLETED: {title} AT LOAD FACTOR {CLF:.3f}\n\n")
     fp.close()
     csv_fp.close()
-    print(f"Analysis completed at load factor {CLF:.3f}. Results written to {output_file}")
+    
+    print(f"\nAnalysis completed at load factor {CLF:.3f}")
+    print(f"Results written to {output_file}")
     print(f"Compact data written to {csv_file}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python epframe.py input_file output_file")
+        print("Usage: python epframe_oneway.py input_file output_file")
         sys.exit(1)
     
-    epframe_analysis(sys.argv[1], sys.argv[2])
+    epframe_oneway_analysis(sys.argv[1], sys.argv[2])

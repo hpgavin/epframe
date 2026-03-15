@@ -10,7 +10,7 @@ Uses 0-indexed numpy arrays internally, 1-indexed for display
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle, Polygon, FancyBboxPatch
+from matplotlib.patches import Circle, Polygon, FancyBboxPatch, FancyArrowPatch
 import sys
 import re
 import os
@@ -26,13 +26,15 @@ def read_output_file(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
 
-    FN = 0
+    FN = 0        # kept for backward compat; new output files have no frame number
+    title = ''    # free-text title from first header line
     NCT = 0
     NE = 0
     E_mod = 0.0
     CORD = None
     ECON = None
     PM = None
+    SMA = None
     DOF = None
     RTYPE = None
 
@@ -41,12 +43,20 @@ def read_output_file(filename):
     while i < len(lines):
         line = lines[i].strip()
 
+        # New format: title is the first non-blank % line after the opening %
+        # Old format: contains 'FRAME NO'
         if 'FRAME NO' in line:
             parts = line.split()
             for j, p in enumerate(parts):
                 if p == 'NO':
                     FN = int(parts[j+1])
                     break
+        # Title line: a % line that is NOT a separator or known keyword
+        if (line.startswith('%') and title == '' and
+                'ELASTIC' not in line and 'FRAME' not in line and
+                'DATA' not in line and '---' not in line and
+                len(line.replace('%', '').strip()) > 0):
+            title = line.replace('%', '').strip()
 
         if 'NUMBER OF NODES'    in line: NCT   = int(line.split()[-1])
         if 'NUMBER OF ELEMENTS' in line: NE    = int(line.split()[-1])
@@ -81,10 +91,13 @@ def read_output_file(filename):
                     # Unidirectional supports remain in DOF vec (active-set handles them)
                     DOF[node_num, coord] = 0 if rt == 1 else 1
 
+        if 'YIELD STRESS'      in line: Fy    = float(line.split()[-1])
+
         if 'DATA FOR ELEMENTS' in line:
             i += 2
             ECON = np.zeros((NE, 2), dtype=int)
             PM   = np.zeros(NE)
+            SMA  = np.zeros(NE)   # moment of inertia IXX per element
 
             for el in range(NE):
                 i += 1
@@ -93,7 +106,13 @@ def read_output_file(filename):
                 elem_num = int(parts[0]) - 1
                 ECON[elem_num, 0] = int(parts[1]) - 1
                 ECON[elem_num, 1] = int(parts[2]) - 1
-                PM[elem_num]      = float(parts[5])
+                SMA[elem_num]     = float(parts[3])   # IXX
+                # New format: parts[5]=Z, parts[6]=MP  (7-column echo)
+                # Old format: parts[5]=MP              (6-column echo)
+                if len(parts) >= 7:
+                    PM[elem_num] = float(parts[6])    # MP = Z * Fy
+                else:
+                    PM[elem_num] = float(parts[5])    # backward compat
 
         if 'PLASTIC HINGE' in line or (not line.startswith('%') and line and 'NCYCL' not in line):
             break
@@ -196,9 +215,9 @@ def read_output_file(filename):
             moment_history.append(moments)
 
             # --- cumulative tension forces ---
-            while i < len(lines) and 'TENSION' not in lines[i]:
+            while i < len(lines) and 'CUMULATIVE TENSION' not in lines[i]:
                 i += 1
-            i += 1
+            i += 2   # skip "CUMULATIVE TENSION FORCES" and "ELEMENT  TENSION" header
 
             forces = np.zeros(NE)
             for j in range(NE):
@@ -216,100 +235,187 @@ def read_output_file(filename):
 
         i += 1
 
-    return (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM,
+    return (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM, SMA,
             hinges, disp_history, moment_history, force_history,
-            load_factors, liftoff_history)
+            load_factors, liftoff_history, title)
 
-def draw_support(ax, x, y, DOF, RTYPE, size, lifted=False):
+def compute_element_curves(CORD, ECON, SMA, E_mod, disp, moments, NE,
+                           frame_size, scale=1.0):
     """
-    Draw support symbol based on DOF flags and reaction types.
+    Compute the curved deformed shape for each element using cubic Hermite
+    interpolation driven by the slope-deflection flexibility relation.
 
-    DOF[i]   : 0 = constrained, 1 = free
-    RTYPE[i] : 0 = free, 1 = bidirectional, 2 = positive-only, 3 = negative-only
-    lifted   : True when a unidirectional support has lifted off (draw gap symbol)
+    For point loads at nodes only the moment varies linearly along each element
+    and the elastic curve is a cubic.  Element end rotations relative to the
+    deformed chord follow from:
 
-    Support classification:
-      Fully fixed       : RTYPE == [1,1,1]  (no free DOFs)
-      Pinned            : RTYPE[0]==1, RTYPE[1]==1, RTYPE[2]==0
-      Bidirectional roller: one translation constrained bidirectionally, rotation free
-      Unidirectional roller: one translation constrained POS or NEG, rotation free
+        φ₁ = (L / 6EI)(2M₁ − M₂)   [near-end, node n1]
+        φ₂ = (L / 6EI)(2M₂ − M₁)   [far-end,  node n2]
+
+    At a plastic hinge the computed φ differs from the structural node rotation
+    in CD, so the rotation discontinuity appears automatically in the plotted
+    curve — no special hinge logic is required.
+
+    INPUTS
+        CORD        (NCT,2)  original node coordinates
+        ECON        (NE,2)   element connectivity (0-indexed)
+        SMA         (NE,)    second moment of area IXX per element
+        E_mod                modulus of elasticity
+        disp        (NCT,3)  cumulative nodal displacements [ΔX, ΔY, Δθ] — UNSCALED
+        moments     (NE,2)   cumulative end moments [M_near, M_far]
+        NE                   number of elements
+        frame_size           max(x_span, y_span) of the undeformed frame — sets dx
+        scale                displacement amplification factor for visualisation
+
+    OUTPUTS
+        curves  list of NE arrays, each shape (n_pts, 2) giving global (x, y)
+                of the curved deformed element sampled at dx ≈ 0.01 × frame_size
     """
-    rx, ry, rz = RTYPE[0], RTYPE[1], RTYPE[2]
+    dx_step = 0.01 * frame_size   # target arc-length step in original coordinates
 
-    if lifted:
-        # Lifted-off unidirectional support: dashed outline + gap marker
-        circle = plt.Circle((x, y - size*0.5), size*0.35,
-                             facecolor='none', edgecolor='gray',
-                             linewidth=1.5, linestyle='--', zorder=2)
-        ax.add_patch(circle)
-        ax.plot([x - size, x + size], [y - size*0.9, y - size*0.9],
-                'k--', linewidth=1.5, alpha=0.5)
-        # Gap lines
-        for dx_g in [-size*0.4, 0, size*0.4]:
-            ax.plot([x + dx_g, x + dx_g - size*0.15],
-                    [y - size*0.9, y - size*1.2], 'k-', linewidth=1, alpha=0.4)
-        return
+    curves = []
 
-    if rx == 1 and ry == 1 and rz == 1:
-        # Fully fixed — filled triangle + hatching
-        tri = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
-                      closed=True, facecolor='gray', edgecolor='black', linewidth=1.5)
-        ax.add_patch(tri)
-        for j in range(5):
-            xh = x - size + j * size * 0.5
-            ax.plot([xh, xh - size*0.3], [y - size*1.2, y - size*1.6], 'k-', linewidth=1)
+    for el in range(NE):
+        n1, n2 = ECON[el, 0], ECON[el, 1]
 
-    elif rx == 1 and ry == 1 and rz == 0:
-        # Pinned — hollow triangle + ground line
-        tri = Polygon([(x, y), (x - size, y - size*1.2), (x + size, y - size*1.2)],
-                      closed=True, facecolor='white', edgecolor='black', linewidth=1.5)
-        ax.add_patch(tri)
-        ax.plot([x - size*1.2, x + size*1.2], [y - size*1.2, y - size*1.2], 'k-', linewidth=2)
+        # Scaled deformed end positions (chord endpoints for the visualisation)
+        X1 = CORD[n1, 0] + scale * disp[n1, 0]
+        Y1 = CORD[n1, 1] + scale * disp[n1, 1]
+        X2 = CORD[n2, 0] + scale * disp[n2, 0]
+        Y2 = CORD[n2, 1] + scale * disp[n2, 1]
 
-    elif ry == 1 and rx != 1:
-        # Standard bidirectional Y roller — circle + horizontal line
-        circle = plt.Circle((x, y - size*0.4), size*0.35,
-                             facecolor='white', edgecolor='black', linewidth=1.5)
-        ax.add_patch(circle)
-        ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
+        # Original element length (used for EI and rotation calculation)
+        dx0 = CORD[n2, 0] - CORD[n1, 0]
+        dy0 = CORD[n2, 1] - CORD[n1, 1]
+        L0  = np.sqrt(dx0**2 + dy0**2)
 
-    elif ry == 2:
-        # Unidirectional Y+ roller (reaction force upward, resists downward displacement)
-        # Symbol: roller circle with upward arrow
-        circle = plt.Circle((x, y - size*0.4), size*0.35,
-                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
-        ax.add_patch(circle)
-        ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
-        ax.annotate('', xy=(x, y + size*0.1), xytext=(x, y - size*0.8),
-                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+        # Deformed chord vector
+        dX = X2 - X1
+        dY = Y2 - Y1
+        L_def = np.sqrt(dX**2 + dY**2)
 
-    elif ry == 3:
-        # Unidirectional Y− roller (reaction force downward, resists upward displacement)
-        # Symbol: roller circle with downward arrow
-        circle = plt.Circle((x, y - size*0.4), size*0.35,
-                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
-        ax.add_patch(circle)
-        ax.plot([x - size, x + size], [y - size*0.8, y - size*0.8], 'k-', linewidth=2)
-        ax.annotate('', xy=(x, y - size*0.8), xytext=(x, y + size*0.1),
-                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+        # Number of segments: ceil(L0 / dx_step), minimum 2
+        n_segs = max(2, int(np.ceil(L0 / dx_step)))
+        t_vals = np.linspace(0.0, 1.0, n_segs + 1)
 
+        if L_def < 1.0e-12 or L0 < 1.0e-12 or SMA[el] < 1.0e-30:
+            curves.append(np.column_stack([
+                X1 + t_vals * dX,
+                Y1 + t_vals * dY]))
+            continue
+
+        # Unit perpendicular to deformed chord (90° CCW)
+        nx = -dY / L_def
+        ny =  dX / L_def
+
+        # Hermite basis functions for relative transverse displacement
+        H2 = t_vals * (1.0 - t_vals)**2   # near-end rotation contribution
+        H4 = t_vals**2 * (t_vals - 1.0)   # far-end  rotation contribution
+
+        # Slope-deflection flexibility → relative end rotations (physical)
+        EI   = E_mod * SMA[el]
+        M1, M2 = moments[el, 0], moments[el, 1]
+        fac  = L0 / (6.0 * EI)
+        phi1 = fac * (2.0*M1 - M2)   # near-end (node n1)
+        phi2 = fac * (2.0*M2 - M1)   # far-end  (node n2)
+
+        # Transverse displacement relative to deformed chord — scaled for visualisation
+        v_rel = scale * L0 * (H2 * phi1 + H4 * phi2)
+
+        # Global coordinates along the curved element
+        x_curve = X1 + t_vals * dX + v_rel * nx
+        y_curve = Y1 + t_vals * dY + v_rel * ny
+
+        curves.append(np.column_stack([x_curve, y_curve]))
+
+    return curves
+
+
+def _rxn_arrow(ax, x0, y0, x1, y1, both_ends=False, zorder=6):
+    """
+    Draw a reaction line using FancyArrowPatch.
+    shrinkA=shrinkB=0 ensures the tip reaches the exact endpoint in data coords.
+    mutation_scale sets the arrowhead size in display points.
+    both_ends=True adds a head at both tips (bidirectional reaction).
+    """
+    kw = dict(arrowstyle='->', color='red', linewidth=2.0,
+              mutation_scale=20, shrinkA=0, shrinkB=0, zorder=zorder)
+    ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), **kw))
+    if both_ends:
+        ax.add_patch(FancyArrowPatch((x1, y1), (x0, y0), **kw))
+
+
+def draw_support(ax, x, y, RTYPE, d_node):
+    """
+    Draw reaction support icon centred on the node.
+    Used on both the geometry plot and the deformed-shape plot.
+
+    Every icon has:
+      • Base shape: solid red circle (no Z reaction) or solid red square (Z reaction)
+      • Horizontal line of total length 4×d_node centred at the node
+      • Vertical   line of total length 4×d_node centred at the node
+
+    Arrowhead convention on lines:
+      Reaction present (rtype > 0): FancyArrowPatch with head(s) at tip(s)
+        rtype 1 (bidirectional) → heads at both ends
+        rtype 2 (+)             → head at positive end
+        rtype 3 (−)             → head at negative end
+      No reaction in that direction (rtype == 0): plain red line, no arrowhead
+
+    Sizes:
+      d_node : node diameter in data coords (caller sets margin × 0.08)
+      d = 3 × d_node : icon diameter / side
+      r = d / 2
+      hl = 2 × d_node : half-length of lines  (total = 4 × d_node)
+    """
+    rx, ry, rz = int(RTYPE[0]), int(RTYPE[1]), int(RTYPE[2])
+    has_x = rx > 0;  has_y = ry > 0;  has_z = rz > 0
+
+    d      = 2.0 * d_node
+    r      = d / 2.0
+    hl     = 3.0 * d_node   # half-length: tips at 3×d_node, icon edge at 1×d_node
+    RED    = 'red'
+    Z_ICON = 5
+    Z_LINE = 6              # lines/arrows drawn above the icon patch
+
+    # --- base icon at Z_ICON ---
+    if has_z:
+        sq = Polygon([(x-r, y-r), (x+r, y-r), (x+r, y+r), (x-r, y+r)],
+                     closed=True, facecolor=RED, edgecolor=RED,
+                     linewidth=1.5, zorder=Z_ICON)
+        ax.add_patch(sq)
+    else:
+        circ = plt.Circle((x, y), r, facecolor=RED, edgecolor=RED,
+                           linewidth=1.5, zorder=Z_ICON)
+        ax.add_patch(circ)
+
+    # --- horizontal line at Z_LINE (above icon) ---
+    x_L, x_R = x - hl, x + hl
+    if rx == 1:
+        _rxn_arrow(ax, x_L, y, x_R, y, both_ends=True, zorder=Z_LINE)
     elif rx == 2:
-        # Unidirectional X+ roller (reaction force rightward)
-        circle = plt.Circle((x - size*0.4, y), size*0.35,
-                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
-        ax.add_patch(circle)
-        ax.plot([x - size*0.8, x - size*0.8], [y - size, y + size], 'k-', linewidth=2)
-        ax.annotate('', xy=(x + size*0.1, y), xytext=(x - size*0.8, y),
-                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
-
+        _rxn_arrow(ax, x_L, y, x_R, y, zorder=Z_LINE)
     elif rx == 3:
-        # Unidirectional X− roller (reaction force leftward)
-        circle = plt.Circle((x + size*0.4, y), size*0.35,
-                             facecolor='lightyellow', edgecolor='black', linewidth=1.5)
-        ax.add_patch(circle)
-        ax.plot([x + size*0.8, x + size*0.8], [y - size, y + size], 'k-', linewidth=2)
-        ax.annotate('', xy=(x - size*0.1, y), xytext=(x + size*0.8, y),
-                    arrowprops=dict(arrowstyle='->', color='darkred', lw=1.5))
+        _rxn_arrow(ax, x_R, y, x_L, y, zorder=Z_LINE)
+    else:
+        ax.plot([x_L, x_R], [y, y], color=RED, linewidth=2.0, zorder=Z_LINE)
+
+    # --- vertical line at Z_LINE (above icon) ---
+    y_B, y_T = y - hl, y + hl
+    if ry == 1:
+        _rxn_arrow(ax, x, y_B, x, y_T, both_ends=True, zorder=Z_LINE)
+    elif ry == 2:
+        _rxn_arrow(ax, x, y_B, x, y_T, zorder=Z_LINE)
+    elif ry == 3:
+        _rxn_arrow(ax, x, y_T, x, y_B, zorder=Z_LINE)
+    else:
+        ax.plot([x, x], [y_B, y_T], color=RED, linewidth=2.0, zorder=Z_LINE)
+
+
+# Identical icon used on both geometry and deformed-shape plots
+draw_reaction_arrows = draw_support
+
+
 
 def plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE, title="Frame Geometry"):
     """Plot undeformed frame geometry with supports"""
@@ -336,18 +442,22 @@ def plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE, title="Frame Geometry")
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7),
                 ha='center', va='center', zorder=2)
     
-    # Draw nodes and supports
+    # Node reference diameter in data coordinates
+    d_node = margin * 0.08
+
+    # Draw reaction icons (before nodes so nodes overlap them)
     for nd in range(NCT):
-        x, y = CORD[nd, 0], CORD[nd, 1]
-        
-        # Draw support if any DOF is constrained
+        xn, yn = CORD[nd, 0], CORD[nd, 1]
         if np.any(RTYPE[nd] > 0):
-            draw_support(ax, x, y, DOF[nd], RTYPE[nd], margin * 0.15)
-        
-        # Draw node
-        ax.plot(x, y, 'ko', markersize=8, zorder=3)
-        ax.text(x, y + margin * 0.12, f'{nd+1}', fontsize=11, fontweight='bold',
-                ha='center', va='bottom', zorder=4)
+            draw_support(ax, xn, yn, RTYPE[nd], d_node)
+
+    # Draw nodes last so they sit on top of everything (zorder=7)
+    for nd in range(NCT):
+        xn, yn = CORD[nd, 0], CORD[nd, 1]
+        ax.plot(xn, yn, 'ko', markersize=8, zorder=7)
+        ax.text(xn + margin * 0.07, yn + margin * 0.07, f'{nd+1}',
+                fontsize=11, fontweight='bold',
+                ha='left', va='bottom', color='black', zorder=8)
     
     ax.set_xlim(x_min - margin, x_max + margin)
     ax.set_ylim(y_min - margin * 1.5, y_max + margin)
@@ -359,88 +469,84 @@ def plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE, title="Frame Geometry")
     
     return fig, ax
 
-def plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE, disp, load_factor,
-                        scale=None, hinge_info=None, liftoff_nodes=None):
+def plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE, disp, moments, load_factor,
+                        SMA, E_mod, scale=None, hinge_info=None, liftoff_nodes=None):
     """Plot deformed shape with optional hinge markers"""
     fig, ax = plt.subplots(figsize=(12, 8))
-    
+
     # Find plot limits
     x_min, x_max = CORD[:, 0].min(), CORD[:, 0].max()
     y_min, y_max = CORD[:, 1].min(), CORD[:, 1].max()
     x_range = x_max - x_min
     y_range = y_max - y_min
-    margin = max(x_range, y_range) * 0.15
-    
-    # Auto-calculate scale if not provided
+    margin  = max(x_range, y_range) * 0.15
+    frame_size = max(x_range, y_range)
+    d_node  = margin * 0.08
+
+    # Auto-scale based on max nodal translation
     if scale is None:
         max_disp = np.max(np.abs(disp[:, :2]))
-        if max_disp > 0:
-            scale = max(x_range, y_range) * 0.08 / max_disp
-        else:
-            scale = 1.0
-    
+        scale = frame_size * 0.08 / max_disp if max_disp > 0 else 1.0
+
     # Draw original shape (dashed)
     for el in range(NE):
         n1, n2 = ECON[el, 0], ECON[el, 1]
         ax.plot([CORD[n1, 0], CORD[n2, 0]], [CORD[n1, 1], CORD[n2, 1]],
                 'b--', linewidth=1.5, alpha=0.4, label='Original' if el == 0 else '')
-    
-    # Draw deformed shape
-    for el in range(NE):
-        n1, n2 = ECON[el, 0], ECON[el, 1]
-        x1_def = CORD[n1, 0] + scale * disp[n1, 0]
-        y1_def = CORD[n1, 1] + scale * disp[n1, 1]
-        x2_def = CORD[n2, 0] + scale * disp[n2, 0]
-        y2_def = CORD[n2, 1] + scale * disp[n2, 1]
-        ax.plot([x1_def, x2_def], [y1_def, y2_def], 'r-', linewidth=2.5,
+
+    # Draw curved deformed shape
+    curves = compute_element_curves(CORD, ECON, SMA, E_mod,
+                                    disp, moments, NE, frame_size, scale=scale)
+    for el, curve in enumerate(curves):
+        ax.plot(curve[:, 0], curve[:, 1], 'r-', linewidth=2.5,
                 label='Deformed' if el == 0 else '')
-    
-    # Draw nodes
+
+    # Reaction icons at original support positions (same as geometry plot)
+    for nd in range(NCT):
+        if np.any(RTYPE[nd] > 0):
+            draw_support(ax, CORD[nd, 0], CORD[nd, 1], RTYPE[nd], d_node)
+
+    # Draw plastic hinge markers on the deformed curves
+    if hinge_info:
+        for h_num, el_num, nd_num in hinge_info:
+            curve = curves[el_num]
+            if nd_num == ECON[el_num, 0]:
+                x_h, y_h = curve[0, 0], curve[0, 1]
+            else:
+                x_h, y_h = curve[-1, 0], curve[-1, 1]
+            circle = Circle((x_h, y_h), margin * 0.06,
+                            facecolor='white', edgecolor='red', linewidth=2.5, zorder=10)
+            ax.add_patch(circle)
+            ax.text(x_h, y_h, f'{h_num}', fontsize=9, fontweight='bold',
+                    color='red', ha='center', va='center', zorder=11)
+
+    # Draw deformed node positions — label upper-right to avoid overlap with reaction lines
     for nd in range(NCT):
         x_def = CORD[nd, 0] + scale * disp[nd, 0]
         y_def = CORD[nd, 1] + scale * disp[nd, 1]
-        ax.plot(x_def, y_def, 'ro', markersize=6, zorder=3)
-        ax.text(x_def, y_def + margin * 0.08, f'{nd+1}', fontsize=10,
-                ha='center', va='bottom', zorder=4)
-    
-    # Draw supports at original positions; lifted-off supports shown with gap symbol
-    _coord_name = {0: 'X', 1: 'Y', 2: 'Z'}
-    for nd in range(NCT):
-        if np.any(RTYPE[nd] > 0):
-            # A support is lifted if any of its unidirectional DOFs are in liftoff_nodes
-            lifted = liftoff_nodes is not None and any(
-                (nd, _coord_name[c]) in liftoff_nodes
-                for c in range(3) if RTYPE[nd, c] in (2, 3)
-            )
-            draw_support(ax, CORD[nd, 0], CORD[nd, 1], DOF[nd], RTYPE[nd],
-                         margin * 0.12, lifted=lifted)
-    
-    # Draw plastic hinges
-    if hinge_info:
-        for h_num, el_num, nd_num in hinge_info:
-            x_h = CORD[nd_num, 0] + scale * disp[nd_num, 0]
-            y_h = CORD[nd_num, 1] + scale * disp[nd_num, 1]
-            circle = Circle((x_h, y_h), margin * 0.06,
-                           facecolor='white', edgecolor='red', linewidth=2.5, zorder=10)
-            ax.add_patch(circle)
-            ax.text(x_h, y_h, f'{h_num}', fontsize=9, fontweight='bold',
-                   color='red', ha='center', va='center', zorder=11)
+        ax.plot(x_def, y_def, 'ro', markersize=6, zorder=7)
+        ax.text(x_def + margin * 0.07, y_def + margin * 0.07, f'{nd+1}',
+                fontsize=10, fontweight='bold',
+                ha='left', va='bottom', color='black', zorder=8)
     
     ax.set_xlim(x_min - margin, x_max + margin)
     ax.set_ylim(y_min - margin * 1.5, y_max + margin)
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    ax.set_xlabel('X (in)', fontsize=12)
-    ax.set_ylabel('Y (in)', fontsize=12)
-    ax.set_title(f'Deformed Shape (Load Factor λ = {load_factor:.3f}, Scale = {scale:.1f}x)',
+    ax.set_xlabel(r'$X$ (in)', fontsize=12)
+    ax.set_ylabel(r'$Y$ (in)', fontsize=12)
+    ax.set_title(rf'Deformed Shape ($\lambda$ = {load_factor:.3f}, scale = {scale:.1f}$\times$)',
                 fontsize=14, fontweight='bold')
     ax.legend(loc='upper right')
     
-    # Add displacement info
+    # Displacement summary
     max_x = np.max(np.abs(disp[:, 0]))
     max_y = np.max(np.abs(disp[:, 1]))
     max_r = np.max(np.abs(disp[:, 2]))
-    info_text = f'Max displacements:\nX: {max_x:.4f} in\nY: {max_y:.4f} in\nRot: {max_r:.5f} rad'
+    info_text = (f'Max displacements:\n'
+                 rf'$\Delta X$: {max_x:.4f} in'  '\n'
+                 rf'$\Delta Y$: {max_y:.4f} in'  '\n'
+                 rf'$\theta$: {max_r:.5f} rad')
     ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
             verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
@@ -470,97 +576,81 @@ def plot_moment_diagram(CORD, ECON, NCT, NE, moments, PM, load_factor, hinges=No
         n1, n2 = ECON[el, 0], ECON[el, 1]
         x1, y1 = CORD[n1, 0], CORD[n1, 1]
         x2, y2 = CORD[n2, 0], CORD[n2, 1]
-        
+
         # Draw element
         ax.plot([x1, x2], [y1, y2], 'b-', linewidth=2.5, zorder=1)
-        
-        M1 = moments[el, 0]  # Near-end moment
-        M2 = moments[el, 1]  # Far-end moment
-        
-        # Element direction
-        dx = x2 - x1
-        dy = y2 - y1
-        L = np.sqrt(dx**2 + dy**2)
-        
-        # Normal direction (perpendicular)
-        nx = -dy / L
-        ny = dx / L
-        
-        # Create moment diagram (linear variation)
-        n_points = 20
-        x_diag = []
-        y_diag = []
-        
+
+        Mi = moments[el, 0]   # element-coord near-end moment (CCW positive)
+        Mj = moments[el, 1]   # element-coord far-end moment
+
+        # Internal moment: M(x) = -Mi*(1-s) + Mj*s
+        # Positive internal moment → compression on top → offset in 90°-CCW normal direction
+        dx = x2 - x1;  dy = y2 - y1
+        L  = np.sqrt(dx**2 + dy**2)
+        nx = -dy / L;  ny = dx / L   # 90° CCW = left of element direction
+
+        # Moment diagram with correct sign at near end
+        n_points = 40
+        x_diag, y_diag = [], []
         for j in range(n_points + 1):
-            s = j / n_points
-            x_pt = x1 + s * dx
-            y_pt = y1 + s * dy
-            M_pt = M1 * (1 - s) + M2 * s
-            
-            x_diag.append(x_pt + M_pt * moment_scale * nx)
-            y_diag.append(y_pt + M_pt * moment_scale * ny)
-        
-        # Draw filled moment diagram - use grey for all
+            s    = j / n_points
+            M_pt = -Mi * (1.0 - s) + Mj * s   # internal moment
+            x_diag.append(x1 + s*dx + M_pt * moment_scale * nx)
+            y_diag.append(y1 + s*dy + M_pt * moment_scale * ny)
+
         x_full = [x1] + x_diag + [x2]
         y_full = [y1] + y_diag + [y2]
-        
         ax.fill(x_full, y_full, color='lightgray', alpha=0.6, edgecolor='blue', linewidth=1.5)
-        
-        # Add moment values at ends
-        ax.text(x1 + M1*moment_scale*nx*1.2, y1 + M1*moment_scale*ny*1.2,
-                f'{M1:.0f}', fontsize=9, ha='center', va='center',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-        ax.text(x2 + M2*moment_scale*nx*1.2, y2 + M2*moment_scale*ny*1.2,
-                f'{M2:.0f}', fontsize=9, ha='center', va='center',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-        
-        # Label element
-        mid_x = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
-        ax.text(mid_x, mid_y, f'E{el+1}', fontsize=10, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-                ha='center', va='center', zorder=5)
-        
+
+        # End-value labels: internal moment at near end = -Mi, at far end = Mj
+        M_near = -Mi
+        M_far  =  Mj
+        lbl_off = 1.2
+        if abs(M_near) > 1e-3:
+            ax.text(x1 + M_near*moment_scale*nx*lbl_off,
+                    y1 + M_near*moment_scale*ny*lbl_off,
+                    f'{M_near:.0f}', fontsize=9, ha='center', va='center',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+        if abs(M_far) > 1e-3:
+            ax.text(x2 + M_far*moment_scale*nx*lbl_off,
+                    y2 + M_far*moment_scale*ny*lbl_off,
+                    f'{M_far:.0f}', fontsize=9, ha='center', va='center',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+
         # Mark plastic hinges
         if hinges:
             for h_num, el_num, nd_num in hinges:
                 if el_num == el:
-                    if nd_num == n1:
-                        x_h, y_h = x1, y1
-                    else:
-                        x_h, y_h = x2, y2
-                    
+                    x_h, y_h = (x1, y1) if nd_num == n1 else (x2, y2)
                     circle = Circle((x_h, y_h), margin * 0.06,
-                                   facecolor='white', edgecolor='red', linewidth=2.5, zorder=10)
+                                    facecolor='white', edgecolor='red',
+                                    linewidth=2.5, zorder=10)
                     ax.add_patch(circle)
                     ax.text(x_h, y_h - margin * 0.12, f'H{h_num}',
                             fontsize=9, fontweight='bold', color='red',
                             ha='center', va='top')
-    
-    # Draw nodes
+
+    # Draw nodes (no labels on force diagrams)
     for nd in range(NCT):
         ax.plot(CORD[nd, 0], CORD[nd, 1], 'ko', markersize=8, zorder=3)
-        ax.text(CORD[nd, 0], CORD[nd, 1] + margin * 0.08, f'{nd+1}',
-                fontsize=11, fontweight='bold', ha='center', va='bottom', zorder=4)
-    
+
     ax.set_xlim(x_min - margin * 1.5, x_max + margin * 1.5)
     ax.set_ylim(y_min - margin * 1.5, y_max + margin * 1.5)
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    ax.set_xlabel('X (in)', fontsize=12)
-    ax.set_ylabel('Y (in)', fontsize=12)
-    ax.set_title(f'Bending Moment Diagram (Load Factor λ = {load_factor:.3f})',
-                fontsize=14, fontweight='bold')
-    
-    # Add legend
+    ax.set_xlabel(r'$X$ (in)', fontsize=12)
+    ax.set_ylabel(r'$Y$ (in)', fontsize=12)
+    ax.set_title(rf'Bending Moment Diagram ($\lambda$ = {load_factor:.3f})',
+                 fontsize=14, fontweight='bold')
+
+    # Legend — no plastic moment value
     ax.text(0.02, 0.98,
-            f'Max Moment: {max_moment:.1f} in-kips\n' +
-            f'Plastic Moment: {PM[0]:.1f} in-kips\n' +
-            f'Tension side shown\nRed marker = Plastic Hinge',
-            transform=ax.transAxes, fontsize=10,
-            verticalalignment='top',
+            f'Peak |M|: {max_moment:.1f} in-kips\n'
+            'Compression side shown\n'
+            'Red marker = Plastic Hinge',
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
-    
+
     return fig, ax
 
 def plot_axial_diagram(CORD, ECON, NCT, NE, forces, load_factor):
@@ -605,51 +695,39 @@ def plot_axial_diagram(CORD, ECON, NCT, NE, forces, load_factor):
         offset = N * force_scale
         x_diag = [x1 + offset * nx, x2 + offset * nx]
         y_diag = [y1 + offset * ny, y2 + offset * ny]
-        
+
         x_full = [x1, x_diag[0], x_diag[1], x2]
         y_full = [y1, y_diag[0], y_diag[1], y2]
-        
-        # Color: red for tension, blue for compression
+
         color = 'lightcoral' if N > 0 else 'lightblue'
         ax.fill(x_full, y_full, color=color, alpha=0.5, edgecolor='green', linewidth=1.5)
-        
-        # Add force value at midpoint
+
+        # Force value at midpoint offset
         mid_x = (x1 + x2) / 2 + offset * nx * 1.3
         mid_y = (y1 + y2) / 2 + offset * ny * 1.3
         label = f'{N:.1f}\n({"T" if N > 0 else "C"})'
         ax.text(mid_x, mid_y, label, fontsize=9, ha='center', va='center',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-        
-        # Label element
-        mid_x = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
-        ax.text(mid_x, mid_y, f'E{el+1}', fontsize=10, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-                ha='center', va='center', zorder=5)
-    
-    # Draw nodes
+
+    # Draw nodes only (no node-number labels on force diagrams)
     for nd in range(NCT):
         ax.plot(CORD[nd, 0], CORD[nd, 1], 'ko', markersize=8, zorder=3)
-        ax.text(CORD[nd, 0], CORD[nd, 1] + margin * 0.08, f'{nd+1}',
-                fontsize=11, fontweight='bold', ha='center', va='bottom', zorder=4)
-    
+
     ax.set_xlim(x_min - margin * 1.5, x_max + margin * 1.5)
     ax.set_ylim(y_min - margin * 1.5, y_max + margin * 1.5)
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    ax.set_xlabel('X (in)', fontsize=12)
-    ax.set_ylabel('Y (in)', fontsize=12)
-    ax.set_title(f'Axial Force Diagram (Load Factor λ = {load_factor:.3f})',
-                fontsize=14, fontweight='bold')
-    
-    # Add legend
+    ax.set_xlabel(r'$X$ (in)', fontsize=12)
+    ax.set_ylabel(r'$Y$ (in)', fontsize=12)
+    ax.set_title(rf'Axial Force Diagram ($\lambda$ = {load_factor:.3f})',
+                 fontsize=14, fontweight='bold')
+
     ax.text(0.02, 0.98,
-            f'Max Axial: {max_force:.1f} kips\n' +
-            f'Red = Tension (T)\nBlue = Compression (C)',
-            transform=ax.transAxes, fontsize=10,
-            verticalalignment='top',
+            f'Peak |N|: {max_force:.1f} kips\n'
+            'Red = Tension (T)\nBlue = Compression (C)',
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
-    
+
     return fig, ax
 
 def plot_shear_diagram(CORD, ECON, NCT, NE, moments, load_factor):
@@ -663,222 +741,199 @@ def plot_shear_diagram(CORD, ECON, NCT, NE, moments, load_factor):
     y_range = y_max - y_min
     margin = max(x_range, y_range) * 0.15
     
-    # Calculate shear forces from moment equilibrium: V = (M1 + M2) / L
+    # V(x) = -dM/dx = -(Mi + Mj)/L  (constant along element)
     shears = np.zeros(NE)
     for el in range(NE):
         n1, n2 = ECON[el, 0], ECON[el, 1]
         dx = CORD[n2, 0] - CORD[n1, 0]
         dy = CORD[n2, 1] - CORD[n1, 1]
-        L = np.sqrt(dx**2 + dy**2)
-        shears[el] = (moments[el, 0] + moments[el, 1]) / L
-    
-    # Find max shear for scaling
+        L  = np.sqrt(dx**2 + dy**2)
+        shears[el] = -(moments[el, 0] + moments[el, 1]) / L
+
     max_shear = np.max(np.abs(shears))
-    if max_shear > 0:
-        shear_scale = margin * 0.5 / max_shear
-    else:
-        shear_scale = 1.0
-    
-    # Draw elements and shear diagrams
+    shear_scale = margin * 0.5 / max_shear if max_shear > 0 else 1.0
+
     for el in range(NE):
         n1, n2 = ECON[el, 0], ECON[el, 1]
         x1, y1 = CORD[n1, 0], CORD[n1, 1]
         x2, y2 = CORD[n2, 0], CORD[n2, 1]
-        
-        # Draw element
+
         ax.plot([x1, x2], [y1, y2], 'b-', linewidth=2.5, zorder=1)
-        
-        V = shears[el]
-        
-        # Element direction
-        dx = x2 - x1
-        dy = y2 - y1
-        L = np.sqrt(dx**2 + dy**2)
-        
-        # Normal direction
-        nx = -dy / L
-        ny = dx / L
-        
-        # Draw constant shear diagram
+
+        V  = shears[el]
+        dx = x2 - x1;  dy = y2 - y1
+        L  = np.sqrt(dx**2 + dy**2)
+        nx = -dy / L;  ny = dx / L
+
         offset = V * shear_scale
-        x_diag = [x1 + offset * nx, x2 + offset * nx]
-        y_diag = [y1 + offset * ny, y2 + offset * ny]
-        
-        x_full = [x1, x_diag[0], x_diag[1], x2]
-        y_full = [y1, y_diag[0], y_diag[1], y2]
-        
-        # Use grey shading for shear
-        ax.fill(x_full, y_full, color='lightgray', alpha=0.6, edgecolor='darkgreen', linewidth=1.5)
-        
-        # Add shear value at midpoint
+        x_full = [x1, x1 + offset*nx, x2 + offset*nx, x2]
+        y_full = [y1, y1 + offset*ny, y2 + offset*ny, y2]
+        ax.fill(x_full, y_full, color='lightgray', alpha=0.6,
+                edgecolor='darkgreen', linewidth=1.5)
+
         mid_x = (x1 + x2) / 2 + offset * nx * 1.3
         mid_y = (y1 + y2) / 2 + offset * ny * 1.3
         ax.text(mid_x, mid_y, f'{V:.1f}', fontsize=9, ha='center', va='center',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-        
-        # Label element
-        mid_x = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
-        ax.text(mid_x, mid_y, f'E{el+1}', fontsize=10, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-                ha='center', va='center', zorder=5)
-    
-    # Draw nodes
+
+    # Draw nodes only (no node-number labels on force diagrams)
     for nd in range(NCT):
         ax.plot(CORD[nd, 0], CORD[nd, 1], 'ko', markersize=8, zorder=3)
-        ax.text(CORD[nd, 0], CORD[nd, 1] + margin * 0.08, f'{nd+1}',
-                fontsize=11, fontweight='bold', ha='center', va='bottom', zorder=4)
-    
+
     ax.set_xlim(x_min - margin * 1.5, x_max + margin * 1.5)
     ax.set_ylim(y_min - margin * 1.5, y_max + margin * 1.5)
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    ax.set_xlabel('X (in)', fontsize=12)
-    ax.set_ylabel('Y (in)', fontsize=12)
-    ax.set_title(f'Shear Force Diagram (Load Factor λ = {load_factor:.3f})',
-                fontsize=14, fontweight='bold')
-    
-    # Add legend
+    ax.set_xlabel(r'$X$ (in)', fontsize=12)
+    ax.set_ylabel(r'$Y$ (in)', fontsize=12)
+    ax.set_title(rf'Shear Force Diagram ($\lambda$ = {load_factor:.3f})',
+                 fontsize=14, fontweight='bold')
+
     ax.text(0.02, 0.98,
-            f'Max Shear: {max_shear:.1f} kips\n' +
-            f'V = (M₁ + M₂) / L',
-            transform=ax.transAxes, fontsize=10,
-            verticalalignment='top',
+            f'Peak |V|: {max_shear:.1f} kips\n'
+            r'$V = -\mathrm{d}M/\mathrm{d}x = -(M_i+M_j)/L$',
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
-    
+
     return fig, ax
 
 def visualize_frame(output_file):
     """Create all visualizations for frame analysis from output file only"""
 
-
     path = './plots/'
+    base = os.path.splitext(os.path.basename(output_file))[0]
 
-    # check whether './plots/' already exists
     if not os.path.exists(path):
         os.mkdir(path)
         print("sub-directory %s created!" % path)
     else:
         print("sub-directory %s already exists" % path)
-    
+
     # Read all data from output file
-    (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM,
+    (FN, NCT, NE, E_mod, CORD, DOF, RTYPE, ECON, PM, SMA,
      hinges, disp_history, moment_history, force_history,
-     load_factors, liftoff_history) = read_output_file(output_file)
-    
-    print(f"Frame {FN}: {NCT} nodes, {NE} elements")
+     load_factors, liftoff_history, title) = read_output_file(output_file)
+
+    plot_title = title if title else base
+    print(f"{base}: {NCT} nodes, {NE} elements")
     print(f"Found {len(hinges)} plastic hinges")
     for h_num, el_num, nd_num in hinges:
-        print(f"  Hinge {h_num}: Element {el_num+1}, Node {nd_num+1}")
-    
-    # 1. Plot original geometry
+        print(f"  Hinge {h_num:2d}: Element {el_num+1}, Node {nd_num+1}")
+
+    # 1. Original geometry
     fig1, ax1 = plot_frame_geometry(CORD, DOF, RTYPE, ECON, NCT, NE,
-                                    title=f"Frame {FN} - Original Geometry")
+                                    title=f"{base} — Geometry")
     plt.tight_layout()
-    plt.savefig(f'{path}frame_{FN}_geometry.pdf', dpi=150, bbox_inches='tight')
-    print(f"Saved: {path}frame_{FN}_geometry.pdf")
+    fname = f'{path}{base}-geometry.pdf'
+    plt.savefig(fname, dpi=150, bbox_inches='tight')
+    print(f"Saved: {fname}")
     plt.close(fig1)
-    
-    # 2. Plot deformed shapes for each hinge formation
-    for idx, (hinge_info, disp, lf) in enumerate(zip(hinges, disp_history, load_factors)):
+
+    # 2. Deformed shapes — one per hinge stage
+    for idx, (hinge_info, disp, moments, lf) in enumerate(
+            zip(hinges, disp_history, moment_history, load_factors)):
         hinges_so_far = hinges[:idx+1]
         liftoff = liftoff_history[idx] if idx < len(liftoff_history) else set()
-        fig2, ax2 = plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE, disp, lf,
+        fig2, ax2 = plot_deformed_shape(CORD, DOF, RTYPE, ECON, NCT, NE,
+                                        disp, moments, lf, SMA, E_mod,
                                         scale=None, hinge_info=hinges_so_far,
                                         liftoff_nodes=liftoff)
         plt.tight_layout()
-        plt.savefig(f'{path}frame_{FN}_deformed_hinge_{idx+1}.pdf', dpi=150, bbox_inches='tight')
-        print(f"Saved: {path}frame_{FN}_deformed_hinge_{idx+1}.pdf")
+        fname = f'{path}{base}-deformed_hinge_{idx+1:02d}.pdf'
+        plt.savefig(fname, dpi=150, bbox_inches='tight')
+        print(f"Saved: {fname}")
         plt.close(fig2)
-    
-    # 3. Plot moment diagrams for each hinge formation
+
+    # 3. Moment diagrams — one per hinge stage
     for idx, (hinge_info, moments, lf) in enumerate(zip(hinges, moment_history, load_factors)):
         hinges_so_far = hinges[:idx+1]
         fig3, ax3 = plot_moment_diagram(CORD, ECON, NCT, NE, moments, PM, lf,
                                         hinges=hinges_so_far)
         plt.tight_layout()
-        plt.savefig(f'{path}frame_{FN}_moments_hinge_{idx+1}.pdf', dpi=150, bbox_inches='tight')
-        print(f"Saved: {path}frame_{FN}_moments_hinge_{idx+1}.pdf")
+        fname = f'{path}{base}-moments_hinge_{idx+1:02d}.pdf'
+        plt.savefig(fname, dpi=150, bbox_inches='tight')
+        print(f"Saved: {fname}")
         plt.close(fig3)
-    
-    # 4. Plot axial force diagrams for final state
+
+    # 4. Axial force diagram — final state
+    n_hinges = len(hinges)
     if len(force_history) > 0:
-        fig4, ax4 = plot_axial_diagram(CORD, ECON, NCT, NE, force_history[-1], load_factors[-1])
+        fig4, ax4 = plot_axial_diagram(CORD, ECON, NCT, NE,
+                                       force_history[-1], load_factors[-1])
         plt.tight_layout()
-        plt.savefig(f'{path}frame_{FN}_axial_{idx+1}.pdf', dpi=150, bbox_inches='tight')
-        print(f"Saved: {path}frame_{FN}_axial_{idx+1}.pdf")
+        fname = f'{path}{base}-axial_hinge_{n_hinges:02d}.pdf'
+        plt.savefig(fname, dpi=150, bbox_inches='tight')
+        print(f"Saved: {fname}")
         plt.close(fig4)
-    
-    # 5. Plot shear force diagrams for final state
+
+    # 5. Shear force diagram — final state
     if len(moment_history) > 0:
-        fig5, ax5 = plot_shear_diagram(CORD, ECON, NCT, NE, moment_history[-1], load_factors[-1])
+        fig5, ax5 = plot_shear_diagram(CORD, ECON, NCT, NE,
+                                       moment_history[-1], load_factors[-1])
         plt.tight_layout()
-        plt.savefig(f'{path}frame_{FN}_shear_{idx+1}.pdf', dpi=150, bbox_inches='tight')
-        print(f"Saved: {path}frame_{FN}_shear_{idx+1}.pdf")
+        fname = f'{path}{base}-shear_hinge_{n_hinges:02d}.pdf'
+        plt.savefig(fname, dpi=150, bbox_inches='tight')
+        print(f"Saved: {fname}")
         plt.close(fig5)
-    
-    # 6. Create summary plot showing progressive collapse
+
+    # 6. Summary: 2×2 progressive collapse panels
     if len(hinges) > 0:
         n_stages = min(4, len(hinges))
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         axes = axes.flatten()
-        
+
         for idx in range(n_stages):
             ax = axes[idx]
-            
-            disp = disp_history[idx]
-            lf = load_factors[idx]
+
+            disp    = disp_history[idx]
+            moments = moment_history[idx]
+            lf      = load_factors[idx]
             hinges_so_far = hinges[:idx+1]
-            
-            # Find plot limits
+
             x_min, x_max = CORD[:, 0].min(), CORD[:, 0].max()
             y_min, y_max = CORD[:, 1].min(), CORD[:, 1].max()
             x_range, y_range = x_max - x_min, y_max - y_min
             margin = max(x_range, y_range) * 0.15
-            
-            # Auto-scale
+            frame_size = max(x_range, y_range)
+
             max_disp = np.max(np.abs(disp[:, :2]))
-            if max_disp > 0:
-                scale = max(x_range, y_range) * 0.08 / max_disp
-            else:
-                scale = 1.0
-            
+            scale = frame_size * 0.08 / max_disp if max_disp > 0 else 1.0
+
             # Draw original (dashed)
             for el in range(NE):
                 n1, n2 = ECON[el, 0], ECON[el, 1]
                 ax.plot([CORD[n1, 0], CORD[n2, 0]], [CORD[n1, 1], CORD[n2, 1]],
                         'b--', linewidth=1, alpha=0.3)
-            
-            # Draw deformed (solid)
-            for el in range(NE):
-                n1, n2 = ECON[el, 0], ECON[el, 1]
-                x1_def = CORD[n1, 0] + scale * disp[n1, 0]
-                y1_def = CORD[n1, 1] + scale * disp[n1, 1]
-                x2_def = CORD[n2, 0] + scale * disp[n2, 0]
-                y2_def = CORD[n2, 1] + scale * disp[n2, 1]
-                ax.plot([x1_def, x2_def], [y1_def, y2_def], 'r-', linewidth=2)
-            
-            # Draw hinges
+
+            # Draw curved deformed shape
+            curves = compute_element_curves(CORD, ECON, SMA, E_mod,
+                                            disp, moments, NE, frame_size, scale=scale)
+            for curve in curves:
+                ax.plot(curve[:, 0], curve[:, 1], 'r-', linewidth=2)
+
+            # Hinge markers on deformed curves
             for h_num, el_num, nd_num in hinges_so_far:
-                x_h = CORD[nd_num, 0] + scale * disp[nd_num, 0]
-                y_h = CORD[nd_num, 1] + scale * disp[nd_num, 1]
+                curve = curves[el_num]
+                x_h = curve[0, 0] if nd_num == ECON[el_num, 0] else curve[-1, 0]
+                y_h = curve[0, 1] if nd_num == ECON[el_num, 0] else curve[-1, 1]
                 circle = Circle((x_h, y_h), margin * 0.05,
-                               facecolor='white', edgecolor='red', linewidth=2)
+                                facecolor='white', edgecolor='red', linewidth=2)
                 ax.add_patch(circle)
-            
+
             ax.set_xlim(x_min - margin, x_max + margin)
             ax.set_ylim(y_min - margin, y_max + margin)
             ax.set_aspect('equal')
             ax.grid(True, alpha=0.3)
-            ax.set_title(f'After Hinge {idx+1} (λ = {lf:.3f})', fontsize=11, fontweight='bold')
-        
-        plt.suptitle(f'Frame {FN} - Progressive Collapse Analysis',
-                     fontsize=14, fontweight='bold')
+            ax.set_title(rf'After Hinge {idx+1:02d} ($\lambda$ = {lf:.3f})',
+                         fontsize=11, fontweight='bold')
+
+        plt.suptitle(f'{base} — Progressive Collapse', fontsize=14, fontweight='bold')
         plt.tight_layout()
-        plt.savefig(f'{path}frame_{FN}_summary.pdf', dpi=150, bbox_inches='tight')
-        print(f"Saved: {path}frame_{FN}_summary.pdf")
+        fname = f'{path}{base}-summary.pdf'
+        plt.savefig(fname, dpi=150, bbox_inches='tight')
+        print(f"Saved: {fname}")
         plt.close(fig)
-    
+
     print("\nVisualization complete!")
 
 if __name__ == "__main__":

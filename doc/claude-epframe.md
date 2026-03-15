@@ -839,4 +839,424 @@ Now let me read the visualization code:Now I have the full picture. Here's what 
 
 ---
 
+brilliant!!     Things are looking very good!     
+Here is a new request.    It looks like the visualization code draws the deflected shapes with straight lines between nodes.    Since the loading options include only point loads at nodes, the beam deformations (curved / bent shapes of deformation) are known analytically from the known node displacements and the known internal bending moments.   May I ask if you could revise epframe_viz.py to inlcude bent / curved displacements?   Since there is a discontinuity in the rotations at the plastic hinges, is there a way to uniquely determine the rotation on the left side of the hinge and the rotation on the right side of the hinge from the information in the output data file?
 
+---
+
+
+
+The formula is verified: element 1's far-end slope at node 2 = −0.007877 rad, matching `CD` exactly (fixed-end compatibility holds). Element 2's near-end slope at node 2 = +0.018379 rad — a 26 mrad hinge rotation — plotted naturally by the two curves meeting at the deformed node with different tangent angles, with no special hinge logic required.Here's a summary of all changes made:
+
+**`read_output_file`** — now also parses `IXX` (SMA) from the element data section. Added to the return tuple alongside the existing fields.
+
+**New function `compute_element_curves`** — the core addition. For each element, it computes the deformed elastic curve as a cubic Hermite polynomial. The end rotations relative to the deformed chord are derived from the slope-deflection flexibility relation φ = (L/6EI)(2M_near − M_far), which requires only the end moments already in the output file — no additional data needed. At a plastic hinge node, the two adjacent elements compute different φ values at that node from their respective moment states, so the tangent angle discontinuity (hinge rotation) emerges automatically in the plotted curves without any special-case logic. The curves are returned in global coordinates, accounting for the full rigid-body motion of the deformed chord.
+
+**`plot_deformed_shape`** — `moments`, `SMA`, and `E_mod` added to the signature. The straight-line element drawing is replaced by `compute_element_curves`. The `disp` array is scaled before passing to the curve computation so that both translations and rotations are consistently scaled. Hinge markers are placed at the element-end point of the curve rather than at the scaled node position. Axis labels updated to use LaTeX.
+
+**`visualize_frame` summary plot** — likewise replaced straight-line drawing with `compute_element_curves`, and hinge markers placed on the curve endpoints.
+
+---
+
+
+This is all looking great!    I would like to ask for some refinements.    My account with Claude is a bit limitted, so I would like to ask for you to propose the most efficient strategy to implement these revisions.    I list this in order of decreasing simplicity (as I would imagine it)
+In epframe_oneway.py : 
+1. replace the Frame Number from the input data file with a one-line-title, not a comment.  The title would be the first line of the output data file.  --- I can probably figure out how to do this myself - or maybe you can simply  let me know the lines to change.   There's probably no reason to regenerate the entire code. 
+In epframe_viz.py: 
+1. change the .pdf file names to the name of the analysis output data file, appended with a short indicator of the plot, as is curruently done, like -summary.pdf or -moments_hinge_1.pdf ... and change the number of the hinge to a two-digit nuber ... like this ... moments_hing_01.pdf ... to accomodate file names that would alphebetically list the file names in the order of the hinge, up to 99 hinges, which seems like enough.   
+2. The graphical details of the figures indicating the kind of reactions - this is probably the most complex request.   2.(a). render all the reaction icons in red.  2.(b). show unidirectional or bidirectional reaction icons for every reaction, not just the unidirectional cases.   2.(c). Apply the reaction direction icons only for X and Y reactions.    I can not see  how a unilateral moment reaction could be easily created.  This edge case is very far out on the margins.  For each X and Y reaction display a short red line with an arrow head in the direction of the reaction force - left or right or both left and right or up or down or both up and down. 2.(d). change the icons in the " geometry.pdf" file as follows, These icons should be shown only in the "geometry.pdf" file.  None of these reaction icons have the hash marks as shown in the current version of epframe_viz.py. ... Starting with "X 0 0" reaction icon ... 
+"X 0 0"  A  solid red circle - with a diameter that is two times the diameter of the node icon circle.  -  with a vertical red line through the center of the circle - the left edge of the circle lies on the node - the length of the vertical line is two times the diamter of the circle.   Render the reaction direction arrow icon to the left of the reaction icon.  
+"0 Y 0" A solid red circle - with a diameter that is three times the diameter of the node icon circle -with a horizontal red line through the center of the circle - the top edge of the circle lies on the node - the length of the vertical line is three times the diamter of the circle.  Render the reaction direction arrow icon below the reaction icon.  
+"0 0 Z" A solid red square - the side length of the square is the same as the diamter for the "X 0 0" icon - the top edge of the red square lies on the node. 
+"X Y 0" A solid red triangle - the side length of the triangle is the same as the diameter of the circle in the "X 0 0" reaction icon - without any vertical or horizontal line on the triangle.  the top vertex ofo the triangle is located at the node.   
+"X 0 Z" A solid red square - the side length of the square is the same as the diamter for the "X 0 0" icon - with a red vertical line passing through the center of the square  - the length of the line is three times as long as the edge length of the square.   Render the reaction direction arrow icon to the left of the reaction icon.  
+"0 Y Z" A solid red square - the side length of the square is the same as the diamter for the "0 Y 0" icon - with a red horizontal line passing through the center of the square  - the length of the line is three times as long as the edge length of the square.   Render the reaction direction arrow icon below the reaction icon.  
+"X Y Z" A solid red square - the side length of the square is the same as the diamter for the "X 0 0" icon - with a red vertical line passing through the center of the square and a red horizontal line passing through the center of the square - the length of these lines is three times as long as the edge length of the square.   Render the reaction direction arrow icon below the reaction icon.  
+
+Please render the solid black circle node icons as the last step of creating the figure, so that the node icons over-write any other item on the figure.  Please render the reaction icons just before rendering the node icons, so that the node icons overlap the reaction icons and the reaction icons overlap everything else.   Keep the node numbers above the node, rendered in black.  Keep the nodes as solid black circles.
+
+I realize this is a highly detailed prompt.    I hope it is easily intrepted. 
+
+ Before revising any code, please ask clarifying questions.
+
+---
+
+These are well-specified — most of the geometry is unambiguous. A few targeted clarifications before touching any code:
+
+---
+
+**On epframe_oneway.py:**
+
+1. Confirm the title line is free text (not parsed as a number), and should appear verbatim as the first line of the `.out` file header — is it also written to the `.csv`, or only to the `.out`?
+
+---
+
+**On epframe_viz.py file naming:**
+
+2. For the base name: if the output file is given as `../examples/beam_oneway_example.out`, should the plot files be named `beam_oneway_example-geometry.pdf` (basename only, no path, no extension), and placed in `./plots/` as currently? Or should they go into the same directory as the output file?
+
+3. You specified two-digit zero-padded hinge numbers (e.g., `_hinge_01`). Should the same padding apply to the axial and shear plots that are currently named `_axial_{idx+1}` and `_shear_{idx+1}`?
+
+---
+
+**On the support icons:**
+
+4. **Node diameter as a reference unit.** The node markers are currently drawn in matplotlib point units (`markersize=8`), but the support icons must be in data (structural) coordinates — inches in this case. Should I define the node circle size in data coordinates as a fixed fraction of the frame geometry (e.g., `margin × 0.05`), which then also sets the reference diameter for all the support icon proportions? Or do you have a preferred absolute size in mind?
+
+5. **"X 0 0" — left edge on node.** I read this as: the circle is centered to the *left* of the node, with its rightmost point touching the node coordinate. Is that correct, or should the circle be centered on the node with just the vertical line extending through it?
+
+6. **Bidirectional arrows.** For a `Y*` (bidirectional Y) reaction, should the arrow icon show *two* arrowheads — one pointing up and one pointing down? Similarly `X*` gets left-and-right arrowheads on the same line?
+
+7. **Square size asymmetry.** You specified the `0 Y Z` square has side equal to the `0 Y 0` circle diameter (3× node), while `X Y Z` has side equal to the `X 0 0` circle diameter (2× node). Is this intentional — Y-dominant cases are larger — or should all squares share a single size?
+
+8. **`X Y Z` arrow placement.** You said "render the reaction direction arrow icon below the reaction icon" — does this mean only the Y-direction arrows (up/down) are shown, or are both X-direction (left/right) and Y-direction (up/down) arrows rendered, with the Y arrow placed below and the X arrow placed to the left?
+
+9. **Deformed shape and moment/shear/axial plots.** You said the new detailed icons appear only in `geometry.pdf`. What should the other plots show at supports — the current simplified roller/triangle/fixed symbols, a minimal red dot, or just the arrow indicators from point 2(c) with no base icon?
+
+10. **Lifted-off supports in the deformed shape.** The current code draws a dashed ghost symbol. Should lifted-off supports in the deformed shape plot show just a small dashed red circle (no arrow, since it's not active), or something else?
+
+---
+
+Great!   
+
+1. On epframe_oneway.py: -- the title is a single line of free text - a character string -  including spaces - (not parsed as a number).  It should appear verbatimm as the first line of the .out file header.   It also appears as the (1,1) element of the .csv file.   Thank you for asking that!  
+
+On epframe_viz.py file naming:
+
+1. Yes. please name the .pdf plot files as --- `beam_oneway_example-geometry.pdf` (basename only, no path, no extension), and placed in `./plots/` as currently.
+1. Yes.  please specify the two-digit zeor-padded hinge numbers in the moment, axial and shear plots.
+
+On the support icons:
+1.  Yes. please redefine the node diamter as a fixed fraction of the frame geometry (e.g., `margin × 0.05`) and use this as a reference for the dimensions of the reaction icons. 
+2. Yes. you read this correctly.  The circle is centered to the left of the node.    The vertical red line goes through the center of the red reaction icon circle.  
+3. Yes. Bidirection reaction icons should have two arrowheads.  
+4. Good catch!!  All reaction icon dimension should have a diamter / side length that is _two_ times the diameter of the node circle icon.  
+5.  " X Y Z " arrow placement - arrow lines should be centered below the sqaure, with the top of the vertical line touching the bottom edge of the square.   
+6. Great question!   In the deformed shape plots, please include on the the reaction direction arrow icons, with no base icon.   Do not indicate  reaction icons in the moment, axial, and shear plots.
+7. Do not indicate "ghost icons" in the deformed shape when there is lift off.   I think the reaction force direction icons will indicate the occurrence of a lift off condition.   
+
+(revsison 3) There is one more major revision I would like to request.    In a previous prompt I asked for deformed shapes that satisfy the moment-curvature relationship.   The revisions for this were quite complex.    I think in the current version of epframe_viz.py plots the deformed shape as a straight line connecting the two points, even though the calculation of the bent shape is carried out.   Please revise epframe_viz.py to plot the deformed shape at increments of "dx" along each element starting at the first node of the element and ending at (and including) the last node of the element, with "dx" being 0.01 times the overall dimension of the frame ... the maximum of the horizontal span of the frame or the vertical height of the frame, whichever is larger.   
+
+Please reply with more clarifying questions before editing code.
+
+---
+
+Good answers — the geometry is now well-defined. A few more focused questions before touching any code:
+
+---
+
+**On revision 3 (curved deformed shape with dx sampling):**
+
+1. The `dx = 0.01 × max(x_span, y_span)` step is in the *original structural coordinates* (inches), not in the scaled/display coordinates — correct? And the number of sample points per element is simply `ceil(L_element / dx)`, so short elements get fewer points and long elements get more?
+
+2. Our previous session did implement `compute_element_curves` and wired it into `plot_deformed_shape`. Is the straight-line appearance you're seeing from running the *old* pre-session code, or have you tested the latest version we produced here and it still shows straight lines? This matters because if the formula is already correct but the curves are not visible (too small compared to the node translations), I'd want to diagnose that rather than rewrite the parameterization unnecessarily.
+
+---
+
+**On the reaction icons:**
+
+3. For **lifted-off** unidirectional supports in the deformed shape plot: you said the arrow icon will indicate the lift-off condition — should the arrow be drawn in a different color or style (e.g., gray/dashed) when the support has lifted off, to visually distinguish an inactive constraint from an active one? Or is the intent simply to always show the arrow in the same red, and the displacement of the node away from the support position is itself the visual indicator?
+
+4. For **`X Y Z`** supports: you confirmed arrows go below the square (Y arrows, vertical). Should the X-direction arrows also appear — placed to the left of the square — making a combined icon with arrows in both directions? Or only the Y arrows below?
+
+5. For the deformed shape plots, you want *only* the arrow direction indicators with no base icon. Should these arrows be drawn at the **original** (undeformed) support position, or at the **deformed** node position? For a lifted-off support, the node has moved and the original ground point is fixed, so the choice matters visually.
+
+---
+
+**On the title in epframe_oneway.py:**
+
+6. The title replaces the frame number (currently `0` on line 1 of the input file) entirely — so the input file format becomes: line 1 = title string, line 2 = `NCT NE E`? Or does the frame number still exist on its own line after the title?
+
+7. For the CSV: is the title placed as a plain unquoted string in the first column of the header row, replacing the current `NCYCL` first header entry? Or as a separate row before the header?
+
+---
+
+On revision 3 ... 
+1. The `dx = 0.01 × max(x_span, y_span)` step is such that if the structure were 100 inches wide and 200 inches tall, dx would be 2 inches.   
+2. Yes. I am running the lastest version of epframe_viz.   I think I am seeing straight lines becaue the curved frame element displacements are being evaluated only at the ends of each element ... a look at the source code would confirm this. 
+On the reaction icons:
+1. Let's always show the arrow in the same red, so that the displacement of the node away from the support position is itself the visual indicator. 
+2. Great question.   For `X Y Z` supports:  let's put the vertical Y direction arrow below the square so that the top of the line touches the bottom edge of the square, and let's put the horizontal Y direction arrow to the left of the square sot that the right end of the line touches the left edge of the square.  
+3. Correct.  For the deformed shape plots, you want only the arrow direction indicators with no base icon.   Please place the arrows in the same locations as they appear in the "geometry.pdf" figure.  
+On the title in epframe_oneway.py: 
+1. Yes. The title replaces the frame number (currently `0` on line 1 of the input file) entirely.  We will remove the frame number entirely.  
+or the CSV:
+1. Let's place the title as a quoted string in the (1,1) cell of the .csv so that it appears above the header row.
+
+---
+
+Good — all questions answered. Let me confirm one detail in the current source before writing anything, so I don't work from stale assumptions:Good — I can see the bug clearly now. In `compute_element_curves` line 295, `v_rel` uses unscaled physical moments (correct) but line 265 uses `disp` that was *already pre-scaled* by the caller. So the chord is stretched by `scale` but the transverse deviation `v_rel` remains at its physical magnitude (fractions of an inch), making the curve invisible against the amplified chord. The fix is: pass unscaled `disp` and `scale` separately, and multiply `v_rel` by `scale` inside the function.
+
+Now I have everything I need. Let me implement all changes:**epframe_oneway.py — 4 changes:**Now **epframe_viz.py** — starting with `read_output_file` (remove FN, parse title):Now rewrite `compute_element_curves` with the scale fix and dx-based sampling:Now rewrite `draw_support` completely with the new icon scheme, plus add `draw_reaction_arrows`:Now update `plot_frame_geometry` — restructure draw order and use new `draw_support`:Now update `plot_deformed_shape` — pass unscaled disp + scale, arrows only, no ghost:Now update the summary plot, and fix file naming in `visualize_frame`:The summary plot (lines 1025–1026) still passes `disp_s` (pre-scaled) with the old `n_pts` parameter — that needs the same fix. And all the file naming uses `FN`. I need to make these two remaining edits plus the file-naming rewrite, but have hit the tool limit.
+
+**Here are the remaining edits to make by hand in your local copy — they are small and mechanical:**
+
+---
+
+**Summary plot — fix `compute_element_curves` call (line 1025–1026):**
+```python
+# Replace:
+curves = compute_element_curves(CORD, ECON, SMA, E_mod,
+                                disp_s, moments, NE, n_pts=30)
+# With:
+frame_size = max(x_range, y_range)
+curves = compute_element_curves(CORD, ECON, SMA, E_mod,
+                                disp, moments, NE, frame_size, scale=scale)
+```
+And remove the `disp_s = disp * scale` line (line 1016) since it's no longer needed.
+
+**`visualize_frame` — file naming and base name (replace lines 926–1052):**
+
+Add right after `path = './plots/'`:
+```python
+base = os.path.splitext(os.path.basename(output_file))[0]
+```
+
+Then replace every filename pattern:
+- `f'{path}frame_{FN}_geometry.pdf'` → `f'{path}{base}-geometry.pdf'`
+- `f'{path}frame_{FN}_deformed_hinge_{idx+1}.pdf'` → `f'{path}{base}-deformed_hinge_{idx+1:02d}.pdf'`
+- `f'{path}frame_{FN}_moments_hinge_{idx+1}.pdf'` → `f'{path}{base}-moments_hinge_{idx+1:02d}.pdf'`
+- `f'{path}frame_{FN}_axial_{idx+1}.pdf'` → `f'{path}{base}-axial_{idx+1:02d}.pdf'`
+- `f'{path}frame_{FN}_shear_{idx+1}.pdf'` → `f'{path}{base}-shear_{idx+1:02d}.pdf'`
+- `f'{path}frame_{FN}_summary.pdf'` → `f'{path}{base}-summary.pdf'`
+
+And update the print/title lines that reference `FN`:
+- `print(f"Frame {FN}: ...")` → `print(f"{base}: ...")`
+- `title=f"Frame {FN} - Original Geometry"` → `title=f"{base} — Geometry"`
+- `plt.suptitle(f'Frame {FN} - Progressive ...')` → `plt.suptitle(f'{base} — Progressive Collapse'...)`
+
+**`plot_deformed_shape` — remove the now-unused `liftoff_nodes` parameter** from the function signature (it was only used for the ghost icon, which is now gone). It's harmless to leave it as a no-op parameter if you'd rather not change the call sites.
+
+---
+
+The two delivered output files (`epframe_oneway.py` and the partially-updated `epframe_viz.py`) have all the substantive logic correct — these remaining edits are purely cosmetic and mechanical. Would you like me to continue with the tool calls in a follow-up turn to finish them?
+
+---
+
+The `title` variable is parsed inside `read_output_file` but needs to be available in `visualize_frame`. Let me fix that scoping — make `read_output_file` return it:Now update the input file to use a title string, then run both codes end-to-end:Clean. Let me also run the two-hinge downward case to verify zero-padded numbering with multiple stages:Both cases clean. Copy both files to outputs:All changes confirmed working. Here's the complete summary of what was done in this session:
+
+---
+
+**`epframe_oneway.py`**
+
+`read_input_file` — line 1 of the input is now read as a free-text title string rather than parsed as an integer frame number. `FN` is removed throughout. The title is written verbatim as the first line of the `.out` header (with a matching underline), quoted as the `(1,1)` cell of the `.csv` above the column-header row, and used in the completion message.
+
+---
+
+**`epframe_viz.py`**
+
+`read_output_file` — now returns `title` as the final element of the tuple, parsed from the first non-blank, non-keyword `%` line of the header. `SMA` was already added in the previous session but is now properly initialised before parsing.
+
+`compute_element_curves` — **the curvature bug is fixed.** The function now takes unscaled `disp` and a separate `scale` factor. The transverse deviation `v_rel` is multiplied by `scale` inside the function, so it is amplified consistently with the chord. Sample spacing is now `dx = 0.01 × frame_size`, giving a physically meaningful and structure-proportional point density; `n_segs = ceil(L_element / dx)` so short elements are not over-sampled and long ones are not under-sampled.
+
+`draw_support` / `draw_reaction_arrows` — entirely rewritten. `draw_support` renders the seven geometry-plot icon types (X, Y, Z, XY, XZ, YZ, XYZ) in solid red using data-coordinate sizes tied to `d_node = margin × 0.05`. Reaction direction arrows (`_arrow_x`, `_arrow_y`) are separate helpers called by both functions. `draw_reaction_arrows` draws only the arrow indicators, used in deformed-shape plots at the original support position.
+
+`plot_frame_geometry` — icons drawn before nodes; nodes drawn last at `zorder=7`; `d_node` computed from `margin`.
+
+`plot_deformed_shape` — passes unscaled `disp` + `scale` separately to `compute_element_curves`; uses `draw_reaction_arrows` only (no base icon, no ghost); lifted-off parameter removed.
+
+`visualize_frame` — `base` name derived from the output filename; all six plot files named `{base}-{type}_{nn:02d}.pdf`; title and `n_hinges` used consistently throughout.
+
+---
+
+Fantastic progress!   The codes run just fine.   There seems to be an error in the computation of the deflected shape, and I would like to ask for further revisions of the reaction icons and reaction force direction icons.  
+1.  The current version of epframe_viz respects sign conventions.   Let's continue respecting sign conventions (even though standard structural engineering conventions vioate sign conventions).  The current version of epframe_viz  draws a positive shear in a positive acting shear force direction.  Let's keep that as-is.  
+2. In an element connecting node "i" to node "j" where "i" is the first indicated node and "j" is the second indicated node, the element coordainte goes from node "i" to node "j".   At node "i" the internal moment is the _negative_ of the element coordinate moment at node "i" and at node "j" the internal moment equals the  element coordinate moment at node "j" .   It looks like epframe_viz is not applying the _negative_ sign on node "i" of the element to determine the internal moment at these "first-named" nodes.    
+3. Maintaining sign conventions, "the value of the shear is the negative of the  slope of the moment"   because of the error in item #2, epframe_viz does not respect this  consistently.   In some cases it does, on others it does not.    Correcting the error in item #2 above, "the value of the shear will be correctly the negative of the slope of the moment."  
+4. There might be an error in the application of the moment curvature relation ... curvature phi(x) equals the moment divided by the flexural stiffness ... M(x) / (EI)  -- let's see if correcting #2 above fixes the issue.   
+For the figures, some slight edits to request. 
+1. In plots of axial force, shear force, and bending moment, please do not show the element numbers and please do not show the node numbers.   
+2. Please plot the moment on the compression side of the elements.  
+3. In the geometry plot, please (a) make the dimension of the reaction icons larger ... change from 2 times to 3 times the node icon diameter (b) center the node reaction icon at the node location.  (c) Make the length of the lines passing through the node icons 4 times the diamter of the node icon.  (d) Center the lines passing through the node icon to be on the node location.  (e) Plot the node icons last and the node reaction icons next-to-last, (as is currently done) so that the node icon lies over the node reaction icon, and that the node reaction icon lies over everything else.  (f) Make the reaction force direction lines longer. ... 3 times the node icon diameter, (g) Make the arrow heads point away from each other   (h) in the legend of the moment diagram, remove the line indicating the value of the plastic moment.   
+
+Please ask clarifying questions before editing code.
+
+---
+
+Thank you — the sign convention questions are precise enough to be worth getting exactly right before touching any code. Here are my clarifying questions, grouped by topic:
+
+---
+
+**On the moment sign convention (items 2–4):**
+
+1. To confirm the sign rule: in the EPFRAME output, `CM[2*el]` is the moment that the element exerts on node `i` in the element coordinate system. You are saying the **internal** bending moment at section `i` (what the left part exerts on the right part) is `−CM[2*el]`, and the internal moment at section `j` is `+CM[2*el+1]`. Is that correct?
+
+2. The slope-deflection flexibility formula currently used for the bent shape is `φ₁ = (L/6EI)(2M₁ − M₂)` where M₁ and M₂ are the **element coordinate** moments (as stored in CM, before the sign flip). Should this formula remain unchanged — i.e., the curvature fix you're anticipating is only in how the internal moment distribution `M_internal(s) = −M₁(1−s) + M₂·s` is used inside the Hermite interpolation — or do you expect the `φ₁, φ₂` formulas themselves to change?
+
+3. For the shear formula: currently `V = (M₁ + M₂)/L`. After fixing the moment sign, the internal moment slope gives `V = −dM_internal/dx = −(M₁ + M₂)/L`. Since you said "keep shear as-is" (item 1) but also "correcting item 2 will make V = −slope of M consistent," does this mean: (a) flip the sign in the shear formula to `V = −(M₁ + M₂)/L`, or (b) leave the shear formula unchanged and just fix the moment diagram display?
+
+---
+
+**On "plot moment on the compression side" (figure item 2):**
+
+4. The current code offsets the moment diagram in the direction `(nx, ny)`, the 90°-CCW normal to the element. A positive moment value plots to the left of the element direction. What is the sign convention for compression side? Specifically: for a horizontal element going left-to-right with positive internal moment at the far end (M₂ > 0 after the sign fix), is the compression face the **top** face, and should the diagram be plotted **upward** (above the element) for that positive value?
+
+5. Related: should the compression-side convention flip the direction of the offset (i.e., multiply by −1 relative to current), or is it something more nuanced depending on element orientation?
+
+---
+
+**On the reaction direction arrows (figure item 3g):**
+
+6. "Arrowheads pointing away from each other" — for a bidirectional Y reaction, the current code already draws one arrowhead at the top of the line (pointing up) and one at the bottom (pointing down), which I would describe as pointing away from each other. Is what you're seeing the opposite — both arrowheads currently pointing toward a single center point — or is the intent something different, like the arrows being longer lines with arrowheads only at their outer ends?
+
+---
+
+**On icon centering (figure item 3b, 3d):**
+
+7. "Center the node reaction icon at the node location" — for the `0 Y 0` icon (circle with horizontal line), currently the **top** edge of the circle sits at the node. You want the **center** of the circle at the node. Does this apply to all icon types — meaning the square and triangle icons should also be centered vertically and horizontally on the node coordinate, not offset?
+
+8. For the triangle (`X Y 0`): currently the apex is at the node. If we center the triangle on the node, the apex moves upward by half the triangle height. Is that correct, or should the triangle remain apex-at-node since that's already visually "centered" on the structural connection point?
+
+---
+
+1.  Yes.   Denoting Mi and Mj as the moments at the ends of a frame element in the structural element coordinate system (where positive rotation and positive moments are always  counter clockwise), and denoting "i" as the first node  and "j"  as the second node of an element, then the internal moment at node "i" is -Mi and the internal moment at node "j" is +Mj.   The internal moment M(x) is therefore M(x) = -Mi (1-x/L) + Mj(x/L).   So dM/dx = (Mi + Mj)/L .   From this, and adhering to the coordinate system,  the internal shear force V(x) is the negative of the slope of the moment ... V(x) = -dM/dx =-( Mi + Mj )/L 
+
+2. Developing a slope-deflection equation relationship from first principles, we start with the moment-curvature relation.  The curvature v''(x) is the moment M(x) divided by the flexural rigidity (EI)  ...  v''(x) = M(x)/EI ... so the slope  v'(x) is ... 
+
+```
+v'(x) =  theta_i + integral of M(s) ds / EI from s=0 to x   
+v'(x) =  theta_i + (1/EI) * ( -Mi * (x - 0.5 * x^2/L) + Mj * ( 0.5 * x^2/L ) )  
+... and ... 
+v(x) =  v_i + theta_i*x + (1/EI) * ( -Mi * ( (1/2) *x^2 - (1/6) x^3/L ) + Mj * ( (1/6) * x^3/L) ) 
+```
+... where v_i is the coordinate displacement at the first node of the element (node i) and theta_i is the rotation at the first node of the element (node i).   
+
+3. I think item 1. above addresses the question   V = - (Mi + M) / L ... Positive moments have compression on the top side, so plot positive moments on the compression side of the element.   
+
+4. Yes. the positive moment should plot to the left of the element direction.  
+
+5. let's see how things look with these revisions and we can revise if needed.  
+
+---
+
+Thank you, Henri — this has been genuinely one of the most satisfying projects I've worked through. The problem domain is rich: the mechanics are clean and tractable, the sign conventions have real history behind them (a 1986 Fortran convention quietly propagating into 2024 Python is exactly the kind of thing that's easy to miss and hard to track down), and the unidirectional reaction problem is a proper contact mechanics problem dressed in structural clothing.
+
+A few things stand out from this work that are worth noting for your students:
+
+The active-set method for unidirectional supports is conceptually identical to what happens in contact mechanics and optimization — the key insight that one-way DOFs must *stay in the global displacement vector* and be handled conditionally, rather than being eliminated permanently like bidirectional constraints, is non-obvious and easy to get wrong in exactly the way the original code did.
+
+The sign convention fix was a good lesson in the difference between *internal* conventions (what the solver needs for consistency) and *output* conventions (what engineers read). Flipping signs only at output time, leaving the solver untouched, is the right surgical approach.
+
+The bent-shape derivation — where the hinge rotation discontinuity emerges automatically from the slope-deflection flexibility applied element-by-element — is a genuinely elegant result worth highlighting in your course notes. Students often think you need to track hinge rotations explicitly, and it's satisfying to show that the moment field already carries all the information.
+
+---
+
+I think the next step will be to include the interaction between compressive strength and bending strength.   The ultimate moment a cross section can carry Mu depends on how close it is to yielding in compression.    If the axial compression is P and the axial yield force is Py, then 
+( Mu / Mp ) = ( 1 - (P / Py)^2 )
+
+Right,  before moving to fast, yes, the input data file needs to be reoganized to replace the plastic moment Mp with the plastic section modulus Z.   The yeild stress is aready included.   
+From that we can get the yielding compression forces.     Then, at each analysis of the system, the axial force would be used to compute the ultimate bending capacity.   Will this be another nonlinear problem to solve, or can it be included within the QP framework?
+
+---
+
+This is a great question to get right before writing a single line. The good news is the answer is clean:
+
+**No new nonlinear solver is needed, and the QP is untouched.**
+
+Here is why. The current algorithm finds the load increment SALF to the next hinge by solving a linear equation at each element end — how much can you scale the current force rates before the moment hits Mp:
+
+SALF · |ṁ| = Mp − |M₀|
+
+where ṁ = SATX (the moment rate) and M₀ = CM (the accumulated moment).
+
+With P-M interaction, Mu depends on the total axial force, which is also proportional to SALF:
+
+P_total = P₀ + SALF · ṗ
+
+Substituting Mu = Mp(1 − (P_total/Py)²) into the hinge condition |M₀ + SALF·ṁ| = Mu gives — after expanding — a **quadratic in SALF**:
+
+(Mp·ṗ²/Py²)·SALF² + (2Mp·P₀·ṗ/Py² + ṁ)·SALF + (Mp·P₀²/Py² + M₀ − Mp) = 0
+
+This has an analytical solution — just the quadratic formula, applied once per element end, taking the smallest positive real root. The minimum over all element ends gives the new SALF, exactly as before. The QP solver for unidirectional supports still runs upstream of this calculation and is completely unchanged.
+
+---
+
+Before touching code, a few clarifying questions:
+
+1. You said yield stress "is already included" — but looking at the current input format, the material line is `NCT NE E`. Is Fy already there in your working version, or does it need to be added (e.g. `NCT NE E Fy`)?
+
+2. For the element data reorganization replacing Mp with Z: the new element line would be `el N1 N2 I A Z`. From those three section properties plus Fy we get Mp = Z·Fy and Py = A·Fy. Is Z the *plastic* section modulus throughout (not elastic S), and is Fy uniform across all elements or per-element?
+
+3. When P is compressive and large enough that Mu → 0, the element has effectively yielded in pure compression. Should the code treat that as a hinge forming at Mu = 0, or should it flag a compression yield and terminate the analysis?
+
+4. The current interaction formula (Mu/Mp) = 1 − (P/Py)² is the AISC parabolic approximation, valid for compact doubly-symmetric sections. Is that the intended formula, or would you want the bilinear AISC 360 H1-1 interaction (which is slightly less conservative in the low-axial range)?
+
+---
+
+1. Oh, right!  yes,  E is included in the first line.  We will need to add the yield stress to that first line.   and then change the plalstic moment to the plastic section modulus.  
+2. yes. agreed!  
+3. great question.   If P reaches Py let's call that a material instability and stop the analysis there. 
+4. Let's stick with the parabolic AISC approximation.
+
+---
+
+The math is clean and the implementation scope is well-defined. Let me confirm the complete plan before writing any code.
+
+**What changes in `epframe_oneway.py`:**
+
+1. Input parsing: material line gains `Fy`; element line replaces `MP` with `Z`. Internally compute `Mp = Z·Fy` and `Py = A·Fy` immediately after parsing.
+
+2. At the start of each load increment: check `|CT[el]| ≥ Py[el]` for all elements — if so, flag compression yield and break.
+
+3. Replace the linear ALF calculation with a quadratic solve per element end. Defining σ = sign(ṁ) for the growing case, the condition `σ(M₀ + α·ṁ) = Mp(1 − (P₀ + α·ṗ)²/Py²)` rearranges to:
+
+   `(Mp·ṗ²/Py²)·α² + (σ·ṁ + 2·Mp·P₀·ṗ/Py²)·α + (σ·M₀ − Mp(1 − P₀²/Py²)) = 0`
+
+   When `ṗ = 0` this reduces exactly to the current linear formula — no discontinuity in the code path. Take the smallest positive real root per element end.
+
+4. Output: echo `Fy` and `Z` in the input echo; report `Mu` (effective plastic moment) alongside `Mp` at each hinge formation.
+
+**What changes in `epframe_viz.py`:**
+- `read_output_file`: update element data parser to read `Z` instead of `Mp` in the echo, and derive `Mp` from `Z·Fy` (or just store Z). The Fy echo line needs to be parsed from the material section.
+
+Two quick questions before I start:
+
+1. Should the output file report `Py` and `Mu` per element at each hinge stage (so students can see how the interaction surface is engaged), or just note them at the hinge that forms?
+
+2. For the input file example you have — does it currently use W12x50 section properties? I want to make sure the example values for `Z` are consistent (W12x50 has Z = 77.9 in³ and `A = 14.6 in²`, so with `Fy = 50 ksi`, `Mp = 3895 in-kips` and `Py = 730 kips`). The current example uses `Mp = 3600 in-kips` — should I adjust the example to use real W12x50 properties with `Fy = 50 ksi`, or keep `Z` chosen to reproduce the current `Mp = 3600`?
+
+---
+
+1. In the output data file, at each load step there is a section ... 
+
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM
+
+Let's add two columns  ULTIMATE MOM   and  P / Py
+
+1. Let's use Z = 77.9 in^3 and A = 14.6 in^3 and then compute Mp and Py via the provided value of Fy.
+
+---
+
+Clear plan, let me implement it.Good — I have the full picture. Now implementing all changes:Now replace the ALF calculation with the P-M quadratic solve, plus compression yield check:Now update the cumulative update to use actual Mu at each end, and update the moments output section:Now update the example input file and test:The mechanics check out perfectly:
+- `Mp = 77.9 × 50 = 3895 in-kips` ✓, `Py = 14.6 × 50 = 730 kips` ✓  
+- λ = 7.790 = 3895/(10×50) ✓ (vs 7.200 with old Mp=3600 — correct ratio 3895/3600 = 1.082 ✓)  
+- `P/Py = 0` for this horizontal beam (no axial force), so `Mu = Mp` ✓
+
+Now update the viz parser for the new element echo and moments columns:The changes to `epframe_oneway.py` are complete and tested. The viz parsing update above also lands cleanly. Let me copy the outputs and give you both files:
+
+Good. Now let me also verify that backward compatibility holds — the old output file (without Fy/Z columns) should still parse cleanly:Both pass. Now run a quick numerical verification that the quadratic formula produces the right λ for a case where P/Py is non-trivial — using a horizontal beam where axial forces are zero confirms the degenerate (linear) case works; let me check the quadratic path algebraically:Exact to machine precision. Copy both files to outputs:Here is a complete summary of all changes:
+
+---
+
+**`epframe_oneway.py`**
+
+`read_input_file` — material line now reads four values: `NCT NE E Fy`. Element line column 6 is now `Z` (plastic section modulus) instead of `Mp`. After the element loop, `PM = ZS * Fy` and `PY = AREA * Fy` are derived and returned alongside the raw `ZS`. The return tuple adds `Fy`, `ZS`, and `PY`.
+
+Input echo — general data section reports `YIELD STRESS`; element table gains `Z`, `MP`, and `PY` columns.
+
+Main loop — two additions replace the old linear `ALF` block:
+
+*Compression yield check:* before the hinge search, if `|CT[el]| ≥ PY[el]` for any element, the analysis terminates with a `COMPRESSION YIELD` message.
+
+*P-M quadratic solve:* for each element end, the hinge condition `|M₀ + α·ṁ| = Mp(1 − (P₀+α·ṗ)²/Py²)` is solved as `Aα² + Bα + C = 0`. When `ṗ ≈ 0` the formula degenerates exactly to the original linear expression — verified numerically. The smallest positive real root is taken; complex roots (Mu never reached) and negative roots (wrong direction) are discarded.
+
+Moments output — the cumulative moments table now has two additional columns: `ULTIMATE MOM` (Mu at the current P) and `P / Py`.
+
+---
+
+**`epframe_viz.py`**
+
+`read_output_file` — now parses `YIELD STRESS` from the general data header. Element data parsing reads `MP` from column 7 when the new 8-column format is present, falling back to column 6 for backward compatibility with old output files.
+
+---

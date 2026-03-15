@@ -1,0 +1,36 @@
+an elastic plastic beam with seven nodes
+
+# NCT  NE   E (ksi)   Fy (ksi)
+   7    6   29000     24         # 7 nodes, 6 elements, modulus, yield stress
+
+# Node data with one-way reactions:
+# Node   X      Y    RX    RY    RZ
+ 1       0      0    X*    Y*    Z*        # Fully fixed (cantilever)
+ 2      50      0    0     0     0         # Free 
+ 3     100      0    0     Y+    0         # Roller (Y bidirectional, rotation free)
+ 4     150      0    0     0     0         # Free 
+ 5     200      0    0     Y+    0         # One-way roller (Y can only resist UP, i.e., positive)
+ 6     250      0    0     0     0         # Free 
+ 7     300      0    0     Y*    0         # Node 4: One-way roller (Y can only resist UP, i.e., positive)
+
+# Element data:
+# Using W12x50 section properties
+# Element N1  N2  I(in^4)  A(in^2)  Z (in^3)
+ 1         1   2   394      14.6    77.6   
+ 2         2   3   394      14.6    77.6 
+ 3         3   4   394      14.6    77.6   
+ 4         4   5   394      14.6    77.6   
+ 5         5   6   394      14.6    77.6   
+ 6         6   7   394      14.6    77.6   
+
+# Number of loaded nodes
+2
+
+# Load data:
+# Apply UPWARD force at Node 3 (between supports 2 and 4)
+# Node  FX(kips)  FY(kips)  MZ(in-kips)
+ 4       0        -10.0       0      
+ 6       0         15.0       0      
+
+# End of input file
+

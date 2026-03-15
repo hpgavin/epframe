@@ -1,0 +1,128 @@
+%
+%     an elastic plastic beam with seven nodes
+%     ----------------------------------------
+%
+%     * GENERAL DATA
+%          NUMBER OF NODES              7
+%          NUMBER OF ELEMENTS           6
+%          MOD OF ELASTICITY       29000.0
+%          YIELD STRESS               24.0
+%
+%
+%     * DATA FOR NODES
+%           NODE   X-COORD   Y-COORD    RX-TYPE  RY-TYPE  RZ-TYPE
+%
+%             1        0.00      0.00        BI       BI       BI
+%             2       50.00      0.00      FREE     FREE     FREE
+%             3      100.00      0.00      FREE      POS     FREE
+%             4      150.00      0.00      FREE     FREE     FREE
+%             5      200.00      0.00      FREE      POS     FREE
+%             6      250.00      0.00      FREE     FREE     FREE
+%             7      300.00      0.00      FREE       BI     FREE
+%
+%     * DATA FOR ELEMENTS
+%         ELEMENT    N1      N2       IXX      AREA         Z        MP        PY
+%
+%             1        1       2    394.00     14.60     77.60   1862.40    350.40
+%             2        2       3    394.00     14.60     77.60   1862.40    350.40
+%             3        3       4    394.00     14.60     77.60   1862.40    350.40
+%             4        4       5    394.00     14.60     77.60   1862.40    350.40
+%             5        5       6    394.00     14.60     77.60   1862.40    350.40
+%             6        6       7    394.00     14.60     77.60   1862.40    350.40
+%
+%     * DATA FOR LOADS
+%           NODE        PX        PY        PZ
+%             4        0.00    -10.00      0.00
+%             6        0.00     15.00      0.00
+%
+%
+%
+%     * PLASTIC HINGE   1 FORMED IN ELEMENT   5 NEAR NODE   6 WHEN LOAD FACTOR IS        4.299
+%
+%     ACTIVE SUPPORT STATUS:
+%       NODE   3: Y=POS:ACTIVE
+%       NODE   5: Y=POS:LIFT-OFF
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.00000     -0.00200     -0.00004
+%                  3      0.00000      0.00000      0.00016
+%                  4      0.00000      0.04476      0.00220
+%                  5      0.00000      0.19952      0.00299
+%                  6      0.00000      0.24472     -0.00218
+%                  7      0.00000      0.00000     -0.00625
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1         36.64      18.32      1 AND  2       1862.40       1862.40     0.0000
+%                  2        -18.32      73.27      2 AND  3       1862.40       1862.40     0.0000
+%                  3        -73.27     860.98      3 AND  4       1862.40       1862.40     0.0000
+%                  4       -860.98    -500.71      4 AND  5       1862.40       1862.40     0.0000
+%                  5        500.71   -1862.40      5 AND  6       1862.40       1862.40     0.0000
+%                  6       1862.40      -0.00      6 AND  7       1862.40       1862.40     0.0000
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1           0.00
+%                  2           0.00
+%                  3           0.00
+%                  4           0.00
+%                  5           0.00
+%                  6           0.00
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ         STATUS
+%                  1        -0.00         1.10       -36.64    ACTIVE
+%                  3        -0.00        14.65         0.00    ACTIVE
+%                  5        -0.00        -0.00         0.00    LIFT-OFF:Y
+%                  7        -0.00       -37.25         0.00    ACTIVE
+%
+%
+%
+%     * PLASTIC HINGE   2 FORMED IN ELEMENT   3 NEAR NODE   4 WHEN LOAD FACTOR IS        4.966
+%
+%     ACTIVE SUPPORT STATUS:
+%       NODE   3: Y=POS:LIFT-OFF
+%       NODE   5: Y=POS:LIFT-OFF
+%
+%          CUMULATIVE DEFORMATIONS
+%                NODE    X-DISP       Y-DISP       ROTN
+%                  1      0.00000      0.00000      0.00000
+%                  2      0.00000      0.15624      0.00617
+%                  3      0.00000      0.60864      0.01185
+%                  4      0.00000      1.35942      0.01864
+%                  5      0.00000      2.42714      0.02271
+%                  6      0.00000      3.49485     -0.06718
+%                  7      0.00000      0.00000     -0.07126
+%
+%          CUMULATIVE MOMENTS
+%             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
+%                  1      -1465.50    1353.55      1 AND  2       1862.40       1862.40     0.0000
+%                  2      -1353.55    1241.60      2 AND  3       1862.40       1862.40     0.0000
+%                  3      -1241.60    1862.40      3 AND  4       1862.40       1862.40     0.0000
+%                  4      -1862.40      -0.00      4 AND  5       1862.40       1862.40     0.0000
+%                  5          0.00   -1862.40      5 AND  6       1862.40       1862.40     0.0000
+%                  6       1862.40      -0.00      6 AND  7       1862.40       1862.40     0.0000
+%
+%          CUMULATIVE TENSION FORCES
+%             ELEMENT     TENSION
+%                  1           0.00
+%                  2           0.00
+%                  3           0.00
+%                  4           0.00
+%                  5           0.00
+%                  6           0.00
+%
+%          REACTIONS AT SUPPORTS
+%                NODE       FX           FY           MZ         STATUS
+%                  1        -0.00        -2.24      1465.50    ACTIVE
+%                  3        -0.00        14.65         0.00    LIFT-OFF:Y
+%                  5        -0.00         0.00        -0.00    LIFT-OFF:Y
+%                  7        -0.00       -37.25         0.00    ACTIVE
+%
+%     *** COLLAPSE MECHANISM DETECTED IN CYCLE 3: STIFFNESS MATRIX IS SINGULAR
+%
+%
+%     ANALYSIS COMPLETED: an elastic plastic beam with seven nodes AT LOAD FACTOR 4.966
+
