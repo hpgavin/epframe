@@ -643,7 +643,7 @@ Here are (a) the current version of the code for incremental load analysis of pl
 Here is the full screen-output from running this example ... 
 
 ```
-: ./epframe_oneway.py  ../examples/beam_oneway_example.txt  ../examples/beam_oneway_example.out
+: ./epframe.py  ../examples/beam.txt  ../examples/beam.out
 === ELASTIC-PLASTIC ANALYSIS WITH ONE-WAY REACTIONS ===
 --- Load Increment 1 ---
   No one-way reactions. Using standard solver.
@@ -658,12 +658,12 @@ Active Support Status:
 --- Load Increment 3 ---
   No one-way reactions. Using standard solver.
 Traceback (most recent call last):
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 731, in <module>
-    epframe_oneway_analysis(sys.argv[1], sys.argv[2])
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 524, in epframe_oneway_analysis
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 731, in <module>
+    epframe(sys.argv[1], sys.argv[2])
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 524, in epframe
     disp, active = solve_with_active_set(
                    ^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 268, in solve_with_active_set
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 268, in solve_with_active_set
     disp[free_dofs] = solve(KSAT[np.ix_(free_dofs, free_dofs)], LV[free_dofs])
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 220, in solve
@@ -768,7 +768,7 @@ Active Support Status:
     Free: 7, Bi: 0, Pos: 1, Neg: 0
     Iter 0: 1 active, 1 violations, max=1.50e+01
 Traceback (most recent call last):
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 303, in solve_with_active_set
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 303, in solve_with_active_set
     disp[free_list] = solve(
                       ^^^^^^
   File "/usr/lib/python3/dist-packages/scipy/linalg/_basic.py", line 220, in solve
@@ -778,12 +778,12 @@ Traceback (most recent call last):
 numpy.linalg.LinAlgError: Matrix is singular.
 During handling of the above exception, another exception occurred:
 Traceback (most recent call last):
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 761, in <module>
-    epframe_oneway_analysis(sys.argv[1], sys.argv[2])
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 547, in epframe_oneway_analysis
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 761, in <module>
+    epframe(sys.argv[1], sys.argv[2])
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 547, in epframe
     disp, active = solve_with_active_set(
                    ^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/hpgavin/Code/epframe/src/./epframe_oneway.py", line 308, in solve_with_active_set
+  File "/home/hpgavin/Code/epframe/src/./epframe.py", line 308, in solve_with_active_set
     return None, active
                  ^^^^^^
 UnboundLocalError: cannot access local variable 'active' where it is not associated with a value
@@ -860,7 +860,7 @@ The formula is verified: element 1's far-end slope at node 2 = −0.007877 rad, 
 
 
 This is all looking great!    I would like to ask for some refinements.    My account with Claude is a bit limitted, so I would like to ask for you to propose the most efficient strategy to implement these revisions.    I list this in order of decreasing simplicity (as I would imagine it)
-In epframe_oneway.py : 
+In epframe.py : 
 1. replace the Frame Number from the input data file with a one-line-title, not a comment.  The title would be the first line of the output data file.  --- I can probably figure out how to do this myself - or maybe you can simply  let me know the lines to change.   There's probably no reason to regenerate the entire code. 
 In epframe_viz.py: 
 1. change the .pdf file names to the name of the analysis output data file, appended with a short indicator of the plot, as is curruently done, like -summary.pdf or -moments_hinge_1.pdf ... and change the number of the hinge to a two-digit nuber ... like this ... moments_hing_01.pdf ... to accomodate file names that would alphebetically list the file names in the order of the hinge, up to 99 hinges, which seems like enough.   
@@ -885,7 +885,7 @@ These are well-specified — most of the geometry is unambiguous. A few targeted
 
 ---
 
-**On epframe_oneway.py:**
+**On epframe.py:**
 
 1. Confirm the title line is free text (not parsed as a number), and should appear verbatim as the first line of the `.out` file header — is it also written to the `.csv`, or only to the `.out`?
 
@@ -919,7 +919,7 @@ These are well-specified — most of the geometry is unambiguous. A few targeted
 
 Great!   
 
-1. On epframe_oneway.py: -- the title is a single line of free text - a character string -  including spaces - (not parsed as a number).  It should appear verbatimm as the first line of the .out file header.   It also appears as the (1,1) element of the .csv file.   Thank you for asking that!  
+1. On epframe.py: -- the title is a single line of free text - a character string -  including spaces - (not parsed as a number).  It should appear verbatimm as the first line of the .out file header.   It also appears as the (1,1) element of the .csv file.   Thank you for asking that!  
 
 On epframe_viz.py file naming:
 
@@ -963,7 +963,7 @@ Good answers — the geometry is now well-defined. A few more focused questions 
 
 ---
 
-**On the title in epframe_oneway.py:**
+**On the title in epframe.py:**
 
 6. The title replaces the frame number (currently `0` on line 1 of the input file) entirely — so the input file format becomes: line 1 = title string, line 2 = `NCT NE E`? Or does the frame number still exist on its own line after the title?
 
@@ -978,7 +978,7 @@ On the reaction icons:
 1. Let's always show the arrow in the same red, so that the displacement of the node away from the support position is itself the visual indicator. 
 2. Great question.   For `X Y Z` supports:  let's put the vertical Y direction arrow below the square so that the top of the line touches the bottom edge of the square, and let's put the horizontal Y direction arrow to the left of the square sot that the right end of the line touches the left edge of the square.  
 3. Correct.  For the deformed shape plots, you want only the arrow direction indicators with no base icon.   Please place the arrows in the same locations as they appear in the "geometry.pdf" figure.  
-On the title in epframe_oneway.py: 
+On the title in epframe.py: 
 1. Yes. The title replaces the frame number (currently `0` on line 1 of the input file) entirely.  We will remove the frame number entirely.  
 or the CSV:
 1. Let's place the title as a quoted string in the (1,1) cell of the .csv so that it appears above the header row.
@@ -987,7 +987,7 @@ or the CSV:
 
 Good — all questions answered. Let me confirm one detail in the current source before writing anything, so I don't work from stale assumptions:Good — I can see the bug clearly now. In `compute_element_curves` line 295, `v_rel` uses unscaled physical moments (correct) but line 265 uses `disp` that was *already pre-scaled* by the caller. So the chord is stretched by `scale` but the transverse deviation `v_rel` remains at its physical magnitude (fractions of an inch), making the curve invisible against the amplified chord. The fix is: pass unscaled `disp` and `scale` separately, and multiply `v_rel` by `scale` inside the function.
 
-Now I have everything I need. Let me implement all changes:**epframe_oneway.py — 4 changes:**Now **epframe_viz.py** — starting with `read_output_file` (remove FN, parse title):Now rewrite `compute_element_curves` with the scale fix and dx-based sampling:Now rewrite `draw_support` completely with the new icon scheme, plus add `draw_reaction_arrows`:Now update `plot_frame_geometry` — restructure draw order and use new `draw_support`:Now update `plot_deformed_shape` — pass unscaled disp + scale, arrows only, no ghost:Now update the summary plot, and fix file naming in `visualize_frame`:The summary plot (lines 1025–1026) still passes `disp_s` (pre-scaled) with the old `n_pts` parameter — that needs the same fix. And all the file naming uses `FN`. I need to make these two remaining edits plus the file-naming rewrite, but have hit the tool limit.
+Now I have everything I need. Let me implement all changes:**epframe.py — 4 changes:**Now **epframe_viz.py** — starting with `read_output_file` (remove FN, parse title):Now rewrite `compute_element_curves` with the scale fix and dx-based sampling:Now rewrite `draw_support` completely with the new icon scheme, plus add `draw_reaction_arrows`:Now update `plot_frame_geometry` — restructure draw order and use new `draw_support`:Now update `plot_deformed_shape` — pass unscaled disp + scale, arrows only, no ghost:Now update the summary plot, and fix file naming in `visualize_frame`:The summary plot (lines 1025–1026) still passes `disp_s` (pre-scaled) with the old `n_pts` parameter — that needs the same fix. And all the file naming uses `FN`. I need to make these two remaining edits plus the file-naming rewrite, but have hit the tool limit.
 
 **Here are the remaining edits to make by hand in your local copy — they are small and mechanical:**
 
@@ -1029,7 +1029,7 @@ And update the print/title lines that reference `FN`:
 
 ---
 
-The two delivered output files (`epframe_oneway.py` and the partially-updated `epframe_viz.py`) have all the substantive logic correct — these remaining edits are purely cosmetic and mechanical. Would you like me to continue with the tool calls in a follow-up turn to finish them?
+The two delivered output files (`epframe.py` and the partially-updated `epframe_viz.py`) have all the substantive logic correct — these remaining edits are purely cosmetic and mechanical. Would you like me to continue with the tool calls in a follow-up turn to finish them?
 
 ---
 
@@ -1037,7 +1037,7 @@ The `title` variable is parsed inside `read_output_file` but needs to be availab
 
 ---
 
-**`epframe_oneway.py`**
+**`epframe.py`**
 
 `read_input_file` — line 1 of the input is now read as a free-text title string rather than parsed as an integer frame number. `FN` is removed throughout. The title is written verbatim as the first line of the `.out` header (with a matching underline), quoted as the `(1,1)` cell of the `.csv` above the column-header row, and used in the completion message.
 
@@ -1192,7 +1192,7 @@ Before touching code, a few clarifying questions:
 
 The math is clean and the implementation scope is well-defined. Let me confirm the complete plan before writing any code.
 
-**What changes in `epframe_oneway.py`:**
+**What changes in `epframe.py`:**
 
 1. Input parsing: material line gains `Fy`; element line replaces `MP` with `Z`. Internally compute `Mp = Z·Fy` and `Py = A·Fy` immediately after parsing.
 
@@ -1228,18 +1228,20 @@ Let's add two columns  ULTIMATE MOM   and  P / Py
 
 ---
 
-Clear plan, let me implement it.Good — I have the full picture. Now implementing all changes:Now replace the ALF calculation with the P-M quadratic solve, plus compression yield check:Now update the cumulative update to use actual Mu at each end, and update the moments output section:Now update the example input file and test:The mechanics check out perfectly:
+Implementing all changes:
+
+Now replace the ALF calculation with the P-M quadratic solve, plus compression yield check:Now update the cumulative update to use actual Mu at each end, and update the moments output section:Now update the example input file and test:The mechanics check out perfectly:
 - `Mp = 77.9 × 50 = 3895 in-kips` ✓, `Py = 14.6 × 50 = 730 kips` ✓  
 - λ = 7.790 = 3895/(10×50) ✓ (vs 7.200 with old Mp=3600 — correct ratio 3895/3600 = 1.082 ✓)  
 - `P/Py = 0` for this horizontal beam (no axial force), so `Mu = Mp` ✓
 
-Now update the viz parser for the new element echo and moments columns:The changes to `epframe_oneway.py` are complete and tested. The viz parsing update above also lands cleanly. Let me copy the outputs and give you both files:
+Now update the viz parser for the new element echo and moments columns:The changes to `epframe.py` are complete and tested. The viz parsing update above also lands cleanly. Let me copy the outputs and give you both files:
 
 Good. Now let me also verify that backward compatibility holds — the old output file (without Fy/Z columns) should still parse cleanly:Both pass. Now run a quick numerical verification that the quadratic formula produces the right λ for a case where P/Py is non-trivial — using a horizontal beam where axial forces are zero confirms the degenerate (linear) case works; let me check the quadratic path algebraically:Exact to machine precision. Copy both files to outputs:Here is a complete summary of all changes:
 
 ---
 
-**`epframe_oneway.py`**
+**`epframe.py`**
 
 `read_input_file` — material line now reads four values: `NCT NE E Fy`. Element line column 6 is now `Z` (plastic section modulus) instead of `Mp`. After the element loop, `PM = ZS * Fy` and `PY = AREA * Fy` are derived and returned alongside the raw `ZS`. The return tuple adds `Fy`, `ZS`, and `PY`.
 
@@ -1260,3 +1262,38 @@ Moments output — the cumulative moments table now has two additional columns: 
 `read_output_file` — now parses `YIELD STRESS` from the general data header. Element data parsing reads `MP` from column 7 when the new 8-column format is present, falling back to column 6 for backward compatibility with old output files.
 
 ---
+
+Good. Now let me also verify that backward compatibility holds — the old output file (without Fy/Z columns) should still parse cleanly:Both pass. Now run a quick numerical verification that the quadratic formula produces the right λ for a case where P/Py is non-trivial — using a horizontal beam where axial forces are zero confirms the degenerate (linear) case works; let me check the quadratic path algebraically:Exact to machine precision. Copy both files to outputs:Here is a complete summary of all changes:
+
+---
+
+**`epframe.py`**
+
+`read_input_file` — material line now reads four values: `NCT NE E Fy`. Element line column 6 is now `Z` (plastic section modulus) instead of `Mp`. After the element loop, `PM = ZS * Fy` and `PY = AREA * Fy` are derived and returned alongside the raw `ZS`. The return tuple adds `Fy`, `ZS`, and `PY`.
+
+Input echo — general data section reports `YIELD STRESS`; element table gains `Z`, `MP`, and `PY` columns.
+
+Main loop — two additions replace the old linear `ALF` block:
+
+*Compression yield check:* before the hinge search, if `|CT[el]| ≥ PY[el]` for any element, the analysis terminates with a `COMPRESSION YIELD` message.
+
+*P-M quadratic solve:* for each element end, the hinge condition `|M₀ + α·ṁ| = Mp(1 − (P₀+α·ṗ)²/Py²)` is solved as `Aα² + Bα + C = 0`. When `ṗ ≈ 0` the formula degenerates exactly to the original linear expression — verified numerically. The smallest positive real root is taken; complex roots (Mu never reached) and negative roots (wrong direction) are discarded.
+
+Moments output — the cumulative moments table now has two additional columns: `ULTIMATE MOM` (Mu at the current P) and `P / Py`.
+
+---
+
+**`epframe_viz.py`**
+
+`read_output_file` — now parses `YIELD STRESS` from the general data header. Element data parsing reads `MP` from column 7 when the new 8-column format is present, falling back to column 6 for backward compatibility with old output files.
+
+---
+
+The code has come a long way — from a straightforward Python translation of a 1986 Fortran solver to a modern, well-structured analysis suite with:
+
+    Unidirectional (one-way) reaction support via active-set iteration
+    Correct CCW-positive sign convention throughout output
+    Curved deformed shapes from the slope-deflection flexibility relation, with hinge rotation discontinuities emerging naturally
+    P-M interaction via the parabolic AISC approximation with an analytical quadratic solve
+    A clean visualization pipeline with physically correct moment, shear, and axial diagrams
+
