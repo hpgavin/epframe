@@ -106,18 +106,7 @@ Columns:
 - `CMn_1/2` - Cumulative moments at element n ends
 - `CTn` - Cumulative tension forces in element n
 
-## Example Results
-
-For the 7-element gable frame example:
-
-| Hinge | Element | Node | Load Factor |
-| ----- | ------- | ---- | ----------- |
-| 1     | 7       | 8    | 18.001      |
-| 2     | 6       | 7    | 20.007      |
-| 3     | 4       | 4    | 22.334      |
-| 4     | 1       | 2    | 22.708      |
-
-## Visualization Examples
+## Visualization 
 
 ### Progressive Collapse
 
