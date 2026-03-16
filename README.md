@@ -18,6 +18,7 @@ The program tracks sequential formation of plastic hinges as loads increase, aut
 - **Unidirectional Reactions**: Reaction forces can be specified to act in only one direction
 - **Automatic Stiffness Modification**: Member stiffnesses adjust as hinges form
 - **Reaction Force Calculations**: Support reactions computed at each load step
+- **Termination Checks**: plastic mechanism, buckling, and compression yield 
 - **Visualization Suite**: Automatic generation of deformed shapes, moment diagrams, shear diagrams, and axial force diagrams
 - **Computation of Element Displacements Between Nodes**: Double integrating M(x)/EI between nodal displacements
 - **CSV Data Export**: Compact numerical data exported to CSV for post-processing
