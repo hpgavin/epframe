@@ -32,9 +32,9 @@ analytical solution for one-way support behavior
 # Element data:
 # Using W12x50 section properties
 # Element N1  N2  I(in^4)  A(in^2)  Z (in^3)
- 1         1   2   394      14.6    77.9   # Left span (0 to 100)
- 2         2   3   394      14.6    77.9   # Middle span (100 to 150)
- 3         3   4   394      14.6    77.9   # Right span (150 to 200)
+ 1         1   2   393      14.6    71.9   # Left span (0 to 100)
+ 2         2   3   393      14.6    71.9   # Middle span (100 to 150)
+ 3         3   4   393      14.6    71.9   # Right span (150 to 200)
 
 # Number of loaded nodes
 1

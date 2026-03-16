@@ -219,9 +219,9 @@ def read_input_file(filename):
         elem_num = int(parts[0]) - 1
         ECON[elem_num, 0] = int(parts[1]) - 1
         ECON[elem_num, 1] = int(parts[2]) - 1
-        SMA[elem_num]  = float(parts[3])
-        AREA[elem_num] = float(parts[4])
-        ZS[elem_num]   = float(parts[5])    # plastic section modulus
+        SMA[elem_num]  = float(parts[3])    # second moment of area, I
+        AREA[elem_num] = float(parts[4])    # cross section area, A
+        ZS[elem_num]   = float(parts[5])    # plastic section modulus, Z
         idx += 1
     
     # Derived section capacities

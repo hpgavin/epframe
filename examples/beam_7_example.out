@@ -25,12 +25,12 @@
 %     * DATA FOR ELEMENTS
 %         ELEMENT    N1      N2       IXX      AREA         Z        MP        PY
 %
-%             1        1       2    394.00     14.60     77.60   1862.40    350.40
-%             2        2       3    394.00     14.60     77.60   1862.40    350.40
-%             3        3       4    394.00     14.60     77.60   1862.40    350.40
-%             4        4       5    394.00     14.60     77.60   1862.40    350.40
-%             5        5       6    394.00     14.60     77.60   1862.40    350.40
-%             6        6       7    394.00     14.60     77.60   1862.40    350.40
+%             1        1       2    393.00     14.60     71.90   1725.60    350.40
+%             2        2       3    393.00     14.60     71.90   1725.60    350.40
+%             3        3       4    393.00     14.60     71.90   1725.60    350.40
+%             4        4       5    393.00     14.60     71.90   1725.60    350.40
+%             5        5       6    393.00     14.60     71.90   1725.60    350.40
+%             6        6       7    393.00     14.60     71.90   1725.60    350.40
 %
 %     * DATA FOR LOADS
 %           NODE        PX        PY        PZ
@@ -39,7 +39,7 @@
 %
 %
 %
-%     * PLASTIC HINGE   1 FORMED IN ELEMENT   5 NEAR NODE   6 WHEN LOAD FACTOR IS        4.299
+%     * PLASTIC HINGE   1 FORMED IN ELEMENT   6 NEAR NODE   6 WHEN LOAD FACTOR IS        3.983
 %
 %     ACTIVE SUPPORT STATUS:
 %       NODE   3: Y=POS:ACTIVE
@@ -48,21 +48,21 @@
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2      0.00000     -0.00200     -0.00004
-%                  3      0.00000      0.00000      0.00016
-%                  4      0.00000      0.04476      0.00220
-%                  5      0.00000      0.19952      0.00299
-%                  6      0.00000      0.24472     -0.00218
-%                  7      0.00000      0.00000     -0.00625
+%                  2      0.00000     -0.00186     -0.00004
+%                  3      0.00000      0.00000      0.00015
+%                  4      0.00000      0.04158      0.00205
+%                  5      0.00000      0.18533      0.00278
+%                  6      0.00000      0.22732     -0.00202
+%                  7      0.00000      0.00000     -0.00581
 %
 %          CUMULATIVE MOMENTS
 %             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
-%                  1         36.64      18.32      1 AND  2       1862.40       1862.40     0.0000
-%                  2        -18.32      73.27      2 AND  3       1862.40       1862.40     0.0000
-%                  3        -73.27     860.98      3 AND  4       1862.40       1862.40     0.0000
-%                  4       -860.98    -500.71      4 AND  5       1862.40       1862.40     0.0000
-%                  5        500.71   -1862.40      5 AND  6       1862.40       1862.40     0.0000
-%                  6       1862.40      -0.00      6 AND  7       1862.40       1862.40     0.0000
+%                  1         33.95      16.97      1 AND  2       1725.60       1725.60     0.0000
+%                  2        -16.97      67.89      2 AND  3       1725.60       1725.60     0.0000
+%                  3        -67.89     797.74      3 AND  4       1725.60       1725.60     0.0000
+%                  4       -797.74    -463.93      4 AND  5       1725.60       1725.60     0.0000
+%                  5        463.93   -1725.60      5 AND  6       1725.60       1725.60     0.0000
+%                  6       1725.60      -0.00      6 AND  7       1725.60       1725.60     0.0000
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
@@ -75,15 +75,15 @@
 %
 %          REACTIONS AT SUPPORTS
 %                NODE       FX           FY           MZ         STATUS
-%                  1        -0.00         1.10       -36.64    ACTIVE
-%                  3        -0.00        14.65         0.00    ACTIVE
-%                  5        -0.00        -0.00         0.00    LIFT-OFF:Y
-%                  7        -0.00       -37.25         0.00    ACTIVE
+%                  1        -0.00         1.02       -33.95    ACTIVE
+%                  3        -0.00        13.58        -0.00    ACTIVE
+%                  5        -0.00         0.00         0.00    LIFT-OFF:Y
+%                  7        -0.00       -34.51         0.00    ACTIVE
 %     *** WARNING: HINGE COUNT (2) EXCEEDS DEGREE OF STATIC INDETERMINACY (1) — KINEMATIC MECHANISM LIKELY
 %
 %
 %
-%     * PLASTIC HINGE   2 FORMED IN ELEMENT   3 NEAR NODE   4 WHEN LOAD FACTOR IS        4.966
+%     * PLASTIC HINGE   2 FORMED IN ELEMENT   4 NEAR NODE   4 WHEN LOAD FACTOR IS        4.602
 %
 %     ACTIVE SUPPORT STATUS:
 %       NODE   3: Y=POS:LIFT-OFF
@@ -92,21 +92,21 @@
 %          CUMULATIVE DEFORMATIONS
 %                NODE    X-DISP       Y-DISP       ROTN
 %                  1      0.00000      0.00000      0.00000
-%                  2      0.00000      0.15624      0.00617
-%                  3      0.00000      0.60864      0.01185
-%                  4      0.00000      1.35942      0.01864
-%                  5      0.00000      2.42714      0.02271
-%                  6      0.00000      3.49485     -0.06718
-%                  7      0.00000      0.00000     -0.07126
+%                  2      0.00000      0.14513      0.00573
+%                  3      0.00000      0.56537      0.01100
+%                  4      0.00000      1.26277      0.01731
+%                  5      0.00000      2.25458      0.02110
+%                  6      0.00000      3.24638      0.01731
+%                  7      0.00000      0.00000     -0.06619
 %
 %          CUMULATIVE MOMENTS
 %             ELEMENT       END MOMENTS             NODES     PLASTIC MOM   ULTIMATE MOM      P / Py
-%                  1      -1465.50    1353.55      1 AND  2       1862.40       1862.40     0.0000
-%                  2      -1353.55    1241.60      2 AND  3       1862.40       1862.40     0.0000
-%                  3      -1241.60    1862.40      3 AND  4       1862.40       1862.40     0.0000
-%                  4      -1862.40      -0.00      4 AND  5       1862.40       1862.40     0.0000
-%                  5          0.00   -1862.40      5 AND  6       1862.40       1862.40     0.0000
-%                  6       1862.40      -0.00      6 AND  7       1862.40       1862.40     0.0000
+%                  1      -1357.85    1254.12      1 AND  2       1725.60       1725.60     0.0000
+%                  2      -1254.12    1150.40      2 AND  3       1725.60       1725.60     0.0000
+%                  3      -1150.40    1725.60      3 AND  4       1725.60       1725.60     0.0000
+%                  4      -1725.60      -0.00      4 AND  5       1725.60       1725.60     0.0000
+%                  5          0.00   -1725.60      5 AND  6       1725.60       1725.60     0.0000
+%                  6       1725.60       0.00      6 AND  7       1725.60       1725.60     0.0000
 %
 %          CUMULATIVE TENSION FORCES
 %             ELEMENT     TENSION
@@ -119,13 +119,13 @@
 %
 %          REACTIONS AT SUPPORTS
 %                NODE       FX           FY           MZ         STATUS
-%                  1        -0.00        -2.24      1465.50    ACTIVE
-%                  3        -0.00        14.65         0.00    LIFT-OFF:Y
-%                  5        -0.00         0.00        -0.00    LIFT-OFF:Y
-%                  7        -0.00       -37.25         0.00    ACTIVE
+%                  1        -0.00        -2.07      1357.85    ACTIVE
+%                  3        -0.00        13.58         0.00    LIFT-OFF:Y
+%                  5        -0.00         0.00         0.00    LIFT-OFF:Y
+%                  7        -0.00       -34.51        -0.00    ACTIVE
 %
 %     *** COLLAPSE MECHANISM DETECTED IN CYCLE 3: STIFFNESS MATRIX IS SINGULAR
 %
 %
-%     ANALYSIS COMPLETED: an elastic plastic beam with seven nodes AT LOAD FACTOR 4.966
+%     ANALYSIS COMPLETED: an elastic plastic beam with seven nodes AT LOAD FACTOR 4.602
 

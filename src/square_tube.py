@@ -30,5 +30,5 @@ I = (b**4)/12 - (b-2*t)**4/12  # cross section second moment of area
 Z = (b**3)/4  - (b-2*t)**3/4   # plastic section modulus
 Mp = Z*Fy
 
-print(f'      A          I          Z  ')
-print(f' {A:10.4f} {I:10.4f}  {Z:10.4f} ')
+print(f'      I          A          Z  ')
+print(f' {I:10.4f} {A:10.4f}  {Z:10.4f} ')
