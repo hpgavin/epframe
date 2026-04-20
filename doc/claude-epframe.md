@@ -1422,3 +1422,330 @@ Simple targeted edits — move the legend, remove the DLMT vertical line, and se
 The progression from a 1986 Fortran code to this — through unidirectional reactions, P-M interaction, and geometric nonlinearity — is a complete and rigorous treatment of plastic frame collapse. 
 
 ---
+
+## We will now use epframe and epframe_viz to analyze and design earthquake-resistant furnatiture, specifically, school desks to protect students from falling debris via a designed plastic failure mechanism of the desk, made of replacable structural fuses that will fail in a way that makes the desktop tent-shaped to shed falling debris.
+
+---
+
+What a wonderful application — this is plastic mechanism design running in reverse. Instead of finding the collapse load of a given structure, you specify the desired collapse *shape* and work backward to the fuse properties that produce it. The tent geometry is elegant: debris loads are shed laterally rather than accumulating, and the protected space under the desktop is maintained.
+
+Before touching any code or geometry, let me ask the questions that will determine the design:
+
+**On the desired mechanism:**
+
+1. "Tent-shaped" — do you mean the desktop folds into an inverted V with the ridge running along the long axis of the desk (like a pitched roof), or along the short axis, or symmetrically in both directions (a four-sided pyramid)? The choice determines how many fuses are needed and where they sit.
+
+2. Should the tent form *passively* under a gravity debris load (a quasi-static pressure on the desktop), or does it need to form under a dynamic impact? If dynamic, is the design load specified as a peak force, an impulse, or an energy?
+
+3. Should the legs remain upright (fuses only in the desktop), or is leg splay part of the designed mechanism? Leg splay increases the protected volume but requires fuses at the leg-to-desktop joints.
+
+**On the fuse design:**
+
+4. What is the desk material — steel tubing, aluminum extrusions, wood with steel connectors? The fuse material determines whether Mp = Z·Fy is the right capacity model or whether something else (e.g. bolt shear, weld fracture) governs.
+
+5. Are the fuses located at discrete points (bolted splice plates, scored sections) or distributed (a uniform weakened zone)? The epframe model handles discrete hinges naturally.
+
+6. What is the target debris load — is there a code reference (e.g. ICC 500, FEMA P-361 safe room criteria) or is this a first-principles estimate of roof/ceiling panel weight?
+
+**On the constraint that the desk must function normally before the event:**
+
+7. What is the serviceability load — the weight of a student leaning on the desktop, books, a laptop? The fuses must not yield under this load, so there is a lower bound on Mp as well as an upper bound from the debris load.
+
+8. After the event, the fuses are replaced and the desk is restored. Is the rest of the desk frame assumed to remain elastic (i.e., the fuses are the only elements that yield), or is some permanent deformation in the main frame acceptable?
+
+
+---
+
+## Hello!   It is time for us to present this work on a poster.    To start with, may I ask for a brief recap of the methodological advancements.   (1) one-way reactions, (2) moment-axial interactions, (3) P-delta (geometric nonlinearity) effects.   
+This information should fit within one quarter of a typical poster.   Please start with bullet points for each of the three items, and ideas for a figure describing methodology for each of the three items.   For example, for the moment-axial interaction diagram, a plot of the quadratic curve. Please suggest figures that are similary oriented toward methodological implementation for topcics (1) and (2).   In addition, perhaps a fourth item:  (4) ideas for a flow chart showing the iterative solution method could be helpful.     After discussing the poster layout topics, we can discuss a more comprehensive theory manual.   thanks!!
+
+---
+
+
+
+Great milestone — this work absolutely deserves a poster. Here is a draft of the content and figure ideas for each of the four items:
+
+---
+
+**1. Unidirectional Reaction Supports**
+
+*Bullet points:*
+- Classical frame analysis assumes supports resist forces in both directions; physical supports (rollers on grade, bearing pads, soil contact) can only push, not pull
+- Unidirectional supports are modeled as inequality constraints: reaction R ≥ 0 (or ≤ 0) rather than R = any value
+- Implemented via an **active-set iteration** at each load increment: begin with all unidirectional constraints active; solve; check whether each reaction has the correct sign; release any that violate the constraint and re-solve; repeat until all constraints are simultaneously satisfied and consistent
+- Lift-off is detected when the computed reaction would act in the forbidden direction — the support is removed from the active set and the structure re-analyzes with a reduced support condition
+- The active-set method is equivalent to a quadratic program and converges in a small number of iterations for typical frame problems
+
+*Figure idea:*
+A two-panel schematic. Left panel: a beam on three supports with the center support labeled Y+ (upward reaction only), showing the undeformed geometry with the reaction icon. Right panel: the same beam under an upward load, showing the deformed shape with the center support lifted off (gap symbol), the redistributed reactions at the two remaining supports, and the notation "active set = {1, 3}, support 2: LIFT-OFF." This directly illustrates the before/after of the algorithm's decision.
+
+---
+
+**2. Moment–Axial Interaction**
+
+*Bullet points:*
+- In the presence of axial compression P, a cross-section reaches its plastic capacity at a reduced moment Mu < Mp — the axial force "uses up" some of the plastic capacity
+- Parabolic AISC approximation: Mu/Mp = 1 − (P/Py)² where Py = A·Fy
+- At each load increment, the hinge condition |M₀ + α·ṁ| = Mu(P₀ + α·ṗ) is a **quadratic in the load factor α** because both the moment and the axial force grow with α; solved analytically via the quadratic formula — no iteration required
+- Degenerates exactly to the original linear formula when ṗ ≈ 0 (no axial force rate), ensuring backward compatibility
+- Compression yield (|P| → Py, Mu → 0) is detected as a separate termination condition
+
+*Figure idea:*
+The P-M interaction diagram: horizontal axis P/Py (0 to 1), vertical axis M/Mp (0 to 1), showing the parabolic curve Mu/Mp = 1 − (P/Py)². Overlay two load paths as arrows from the origin — one nearly horizontal (moment-dominated, nearly vertical elements) and one at an angle (combined loading). Mark the point where each path intersects the interaction curve as the hinge formation point. A small inset equation box shows the quadratic in α. This is the single most compact and information-dense figure for this topic.
+
+---
+
+**3. Geometric Stiffness (P-Delta Effects)**
+
+*Bullet points:*
+- Axial forces in deformed members generate transverse restoring (tension) or destabilizing (compression) forces — this is the geometric stiffness effect
+- The element geometric stiffness matrix **K̄_g = (N/L)·G̃** is derived from the work of axial force N moving through the transverse geometric displacement (uy,x)², using Hermite shape functions; the 6×6 matrix **G̃** depends only on element length L
+- At each load increment, **K̄_g** is assembled in global coordinates using the current cumulative axial forces CT and added to the elastic stiffness: **K**_total = **K**_e + **K**_g
+- Compressive elements soften the stiffness matrix; when **K**_total loses positive definiteness, buckling is detected via eigenvalue check and distinguished from a plastic mechanism (zero eigenvalue) vs. geometric instability (negative eigenvalue)
+- The ratio ‖**K**_g‖/‖**K**_e‖ reported at each increment quantifies how much the geometric effect is influencing the solution — values above ~5% signal significant P-delta sensitivity
+
+*Figure idea:*
+A free-body diagram of a single deformed column element under axial compression N and lateral displacement Δ. Show the original vertical position (dashed), the deformed position (solid), and the destabilizing moment N·Δ at the base. Below it, show the 6×6 **G̃** matrix in schematic form (shaded entries nonzero, white entries zero) to illustrate its structure. A caption: "Geometric stiffness couples axial force to lateral response — compression reduces effective lateral stiffness."
+
+---
+
+**4. Solution Flowchart**
+
+*Structure:*
+
+```
+START
+  │
+  ▼
+Build K (compatibility matrix)
+Initialize SF, SA, CM=0, CT=0, CD=0
+Compute DI = 3·NE − ND
+  │
+  ▼
+┌─────────────────────────────────────────────┐
+│  LOAD INCREMENT LOOP                        │
+│                                             │
+│  Form S_full from current SF, SA            │
+│  Ke = K · S · K^T                          │
+│  Kg = assemble geometric stiffness(CT)      │
+│  K_total = Ke + Kg                          │
+│                                             │
+│  ┌─ Active-set solve ────────────────────┐  │
+│  │  Solve K_total · δ = P               │  │
+│  │  Check unidirectional reaction signs  │  │
+│  │  Release violated constraints         │  │
+│  │  Repeat until consistent             │  │
+│  └───────────────────────────────────────┘  │
+│                                             │
+│  F = S · K^T · δ                           │
+│  Check |P| ≥ Py  → COMPRESSION YIELD       │
+│  If NCYCL > DI  → MECHANISM WARNING        │
+│                                             │
+│  Solve quadratic for α (P-M interaction)   │
+│  α·ṁ: Aα² + Bα + C = 0                    │
+│                                             │
+│  Update: CD += α·δ,  CM += α·ṁ,  CT += α·ṗ│
+│  Check: max|CD| > DLMT → DISP. LIMIT       │
+│                                             │
+│  Modify SF at hinge:                        │
+│    Near-end → 0                             │
+│    Far-end  → 0.75 × previous value        │
+└─────────────────────────────────────────────┘
+  │
+  ▼
+Termination checks (any one triggers exit):
+  • K_total singular or negative eigenvalue
+  • |P| ≥ Py  (compression yield)
+  • max|CD| > DLMT  (displacement limit)
+  • NCYCL > DI + margin  (mechanism)
+  • α > 10⁹  (no further hinge possible)
+  │
+  ▼
+Write output (.out + .csv)
+Generate plots (epframe_viz.py)
+  │
+  ▼
+END
+```
+
+*Figure idea for the poster:*
+A clean vertical flowchart with three visual zones distinguished by background shading: (i) initialization (gray), (ii) the main increment loop (blue tint) with the active-set sub-loop shown as a nested box, and (iii) termination conditions (red tint). The P-M quadratic and the geometric stiffness assembly step are highlighted in the loop body. Arrows connecting back to the top of the loop make the iterative nature clear. Keep the box text concise — the equations can reference numbered items in the poster's theory section.
+
+---
+
+**Layout suggestion for the quarter-panel:**
+
+Arrange as a 2×2 grid within the quarter: item (1) upper-left with the two-panel lift-off schematic, item (2) upper-right with the P-M interaction curve, item (3) lower-left with the column FBD and G̃ schematic, and item (4) lower-right with the flowchart. A single shared header: *"Methodological Advances in Incremental Plastic Frame Analysis."*
+
+---
+
+## This is great! ..
+
+ (a) please condense (1), (2), (3) into three bullet points each -- I know it's hard to condense and to maintain meaning,  Please condense so as to communicate clearly to a college sophomore.   
+ (b) For the solution flow-chart, please 
+ (b.i)  Replace "K" for "compatability matrix" with "C" for "compatability. 
+ (b.ii) provide a list of variable names, in alphabetical order and their definitions,
+(b.iii) mention Lagrange multipliers in the Active Set sub section
+ 
+---
+
+**(a) Condensed bullet points**
+
+---
+
+**1. Unidirectional Reaction Supports**
+- Real supports — rollers, bearing pads, soil contact — can push but not pull; classical analysis ignores this by allowing reactions in both directions
+- Each unidirectional support is treated as an inequality constraint, solved by an **active-set method**: at each load step, constrained supports are included or excluded from the stiffness solution until every reaction has the physically correct sign
+- When a support "lifts off," the structure automatically re-analyzes with that support removed, redistributing load to the remaining supports
+
+---
+
+**2. Moment–Axial Interaction**
+- A cross-section under axial compression P reaches its plastic bending capacity at a *reduced* moment Mu < Mp — the axial load consumes part of the section's strength; the reduction follows the parabolic AISC formula Mu/Mp = 1 − (P/Py)²
+- Because both moment and axial force grow together as the load scales, finding the load factor α at the next hinge requires solving a **quadratic equation** — not just a linear ratio as in pure bending
+- When axial compression approaches the squash load Py, the bending capacity vanishes entirely and the analysis stops with a compression yield flag
+
+---
+
+**3. Geometric Stiffness (P-Delta)**
+- Axial forces in deformed members create secondary moments (force × displacement); in compression this *softens* the structure and can trigger buckling; in tension it *stiffens* it — neither effect appears in a standard linear analysis
+- A geometric stiffness matrix **K**_g, proportional to the current axial force in each element, is assembled and added to the elastic stiffness at every load step; the combined matrix governs the solution
+- If **K**_g drives the total stiffness matrix to become non-positive-definite, the analysis detects **buckling** (negative eigenvalue) and distinguishes it from a plastic collapse mechanism (zero eigenvalue)
+
+---
+
+**(b) Updated flowchart**
+
+```
+START
+  │
+  ▼
+Build C (compatibility matrix from frame geometry)
+Initialize SF, SA;  CM = CT = CD = 0
+Compute DI = 3·NE − ND
+  │
+  ▼
+┌──────────────────────────────────────────────────────┐
+│  LOAD INCREMENT LOOP                                 │
+│                                                      │
+│  Form S from current SF (bending) and SA (axial)    │
+│  Ke = C^T · S · C          (elastic stiffness)      │
+│  Kg = assemble_geometric(CT, C, L)                  │
+│  Ktot = Ke + Kg                                      │
+│                                                      │
+│  ┌─ Active-Set Solve ──────────────────────────────┐ │
+│  │  Solve Ktot · δ = P  for unconstrained DOFs     │ │
+│  │  Lagrange multipliers give reaction forces      │ │
+│  │  at constrained DOFs                            │ │
+│  │  If any unidirectional reaction has wrong sign: │ │
+│  │    release that constraint → update active set  │ │
+│  │  Repeat until all reactions are sign-consistent │ │
+│  └─────────────────────────────────────────────────┘ │
+│                                                      │
+│  F = S · C^T · δ      (member force rates)          │
+│  Check |CT[el]| ≥ Py[el]  →  COMPRESSION YIELD     │
+│  If NCYCL > DI            →  MECHANISM WARNING      │
+│                                                      │
+│  Solve for load factor α  (P-M quadratic):          │
+│    A·α² + B·α + C_coef = 0                          │
+│    A  = Mp·ṗ²/Py²                                   │
+│    B  = s·ṁ + 2·Mp·P₀·ṗ/Py²                        │
+│    C_coef = s·M₀ − Mp·(1 − (P₀/Py)²)               │
+│    take smallest positive real root over all ends   │
+│                                                      │
+│  Update cumulative values:                          │
+│    CD += α·δ,   CM += α·ṁ,   CT += α·ṗ,  λ += α   │
+│  Check max|CD| > DLMT  →  DISPLACEMENT LIMIT        │
+│                                                      │
+│  Modify SF at new hinge:                            │
+│    Near-end stiffness  →  0  (moment released)      │
+│    Far-end stiffness   →  0.75 × prior value        │
+└──────────────────────────────────────────────────────┘
+  │
+  ▼
+TERMINATION  (first condition met stops the analysis)
+  • Ktot singular or negative eigenvalue  (buckling / mechanism)
+  • |CT| ≥ Py in any element             (compression yield)
+  • max|CD| > DLMT                        (displacement limit)
+  • NCYCL > DI                            (mechanism likely)
+  • α > 10⁹                               (no further hinge)
+  │
+  ▼
+Write output  (.out  and  .csv)
+Generate plots  (epframe_viz.py)
+  │
+  ▼
+END
+```
+
+---
+
+**(b.ii) Variable definitions — alphabetical**
+
+| Symbol | Definition |
+|---|---|
+| α | Load factor increment to the next plastic hinge (scalar solved at each step) |
+| A, B, C_coef | Coefficients of the quadratic equation for α in P-M hinge detection |
+| C | Compatibility matrix — maps member deformations to structural DOF displacements |
+| CD | Cumulative nodal displacement vector (updated each increment) |
+| CM | Cumulative member end-moment vector (updated each increment) |
+| CT | Cumulative member axial tension force vector (updated each increment) |
+| δ | Nodal displacement rate vector — solution of Ktot·δ = P at unit load |
+| DI | Degree of static indeterminacy = 3·NE − ND |
+| DLMT | Displacement limit = 0.1 × max frame dimension |
+| E | Elastic modulus |
+| F | Member force rate vector (moments + axial) = S · C^T · δ |
+| Fy | Yield stress |
+| Ke | Global elastic stiffness matrix = C^T · S · C |
+| Kg | Global geometric stiffness matrix (assembled from element Ḡ matrices weighted by CT) |
+| Ktot | Total stiffness matrix = Ke + Kg |
+| λ | Cumulative load factor (sum of all α increments) |
+| L | Element length |
+| M₀ | Cumulative moment at an element end at the start of the current increment (from CM) |
+| ṁ | Moment rate at an element end = corresponding entry of F |
+| Mp | Plastic moment capacity = Z · Fy |
+| Mu | Reduced plastic moment under axial load = Mp·(1 − (P/Py)²) |
+| ND | Number of free (unconstrained) structural degrees of freedom |
+| NE | Number of frame elements |
+| P | Applied nodal load vector |
+| P₀ | Cumulative axial force in an element at the start of the current increment (from CT) |
+| ṗ | Axial force rate in an element = corresponding entry of F |
+| Py | Axial yield force = A · Fy |
+| s | Sign of M₀ (or of ṁ when M₀ ≈ 0) — determines which side of the interaction surface is approached |
+| S | Block-diagonal member stiffness matrix (bending blocks SF + axial blocks SA) |
+| SA | Axial stiffness coefficients = E·A/L per element |
+| SF | Bending stiffness coefficients (4EI/L, 2EI/L terms; reduced at hinge locations) |
+| Z | Plastic section modulus |
+
+---
+
+
+
+## very helpful!! the flow chart and the definitions table look great!!
+... next, may I ask for a theory manual for the three major improvements to EPFRAME, and the associated flow chart you have provided?    ... equations are fine, written description is better.   Please pitch this to a university master's student who has had a course in nonlinear structural analysis.
+
+1. Please present the topics in the order of our exploration - uni-directional reactions, then P-M interaction, finally geometric stiffness. 
+2. "shown but not belabored" is the right level. 
+3. Please include an intro section on the fundamental EPFRAME 'framework' --- (compatibility matrix, stiffness modification at hinges)
+4. Please use the notation shown in the flowchart
+5. Please just state the quadratic and its coefficients.   For I-shaped or tubular sections, the P-M diagram is more complex.   Let's just stick with the quadratic approximation, since because of the mathematical simplicity!  
+6. 5 to 7 pages please? 
+7. No example section please
+8. Please start with an assumptions section and end with a limitations section. 
+
+---
+
+Here is the document. The six sections are:
+
+1. Assumptions and Scope — seven bullet points covering Bernoulli-Euler kinematics, point loads only, monotonic proportional loading, linear elasticity with discrete plasticity, parabolic P-M interaction, linearised geometric stiffness, and undeformed-geometry assembly.
+
+2. The EPFRAME Framework — the compatibility matrix C and the global stiffness K = Cᵀ·S·C; the load increment loop and cumulative update equations; the near-end / far-end hinge stiffness modification (4EI/L → 3EI/L).
+
+3. Unidirectional Reaction Supports — physical motivation, the inequality constraint R_k ≥ 0, the five-step active-set iteration, and the Lagrange multiplier expression for the reaction.
+
+4. Moment–Axial Force Interaction — the parabolic surface Mu/Mp = 1 − (P/Py)², the linear-in-α moment and axial force expressions, and the quadratic Aα² + Bα + C_coef = 0 with its three coefficients stated explicitly. The degeneration to the classical linear formula when ṗ ≈ 0 is noted.
+
+5. Geometric Stiffness — physical motivation (secondary transverse force from axial load in deformed geometry); the element matrix K̄_g = (N/L)·G̃; global assembly; the per-increment update K_tot = K_e + K_g; buckling vs. mechanism distinction via minimum eigenvalue; and the indeterminacy threshold DI = 3·NE − ND with the mechanism warning.
+
+6. Limitations — eight bullet points covering shear deformation, distributed loads, monotonic loading, residual stresses, the parabolic P-M approximation, undeformed-geometry assembly, first-order geometric stiffness only, and no strain hardening.
+
